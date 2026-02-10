@@ -1,0 +1,2 @@
+1.- Login with user and password. this will be managed by MSAL.
+2.- Home screen. Here we will display a left side menu with some options, and the rest of the screen will display the content of the selected option. The first option will be to upload PDF documents with electricity prices, and a "submit" button that will forward this PDF to some reading service. 
