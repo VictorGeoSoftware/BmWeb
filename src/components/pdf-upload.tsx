@@ -70,32 +70,51 @@ export default function PdfUpload() {
     setIsUploading(true);
     setUploadProgress(0);
 
-    // Mock upload process
     const interval = setInterval(() => {
-      setUploadProgress(prev => {
-        if (prev >= 95) {
-          return prev;
-        }
-        return prev + 5;
+      setUploadProgress(prev => (prev >= 95 ? prev : prev + 5));
+    }, 120);
+
+    try {
+      const formData = new FormData();
+      formData.append('file', files[0]);
+
+      const response = await fetch('/api/price-proposal/upload', {
+        method: 'POST',
+        body: formData,
       });
-    }, 100);
 
-    await new Promise(resolve => setTimeout(resolve, 2500));
-    
-    clearInterval(interval);
-    setUploadProgress(100);
+      const responseText = await response.text();
+      const payload = responseText ? JSON.parse(responseText) : {};
 
-    await new Promise(resolve => setTimeout(resolve, 500));
+      if (!response.ok) {
+        throw new Error(payload?.message ?? 'Upload failed');
+      }
 
-    toast({
-      title: 'Upload successful',
-      description: `${files[0].name} has been uploaded.`,
-    });
-    setFiles([]);
-    setIsUploading(false);
-    setUploadProgress(0);
-    if (inputRef.current) {
+      setUploadProgress(100);
+
+      toast({
+        title: 'Upload successful',
+        description: `${files[0].name} has been processed and stored.`,
+      });
+
+      console.log('Price proposal upload response:', payload);
+
+      setFiles([]);
+      if (inputRef.current) {
         inputRef.current.value = "";
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unexpected upload error';
+      toast({
+        variant: 'destructive',
+        title: 'Upload failed',
+        description: message,
+      });
+      console.error('Upload price proposal failed:', error);
+    } finally {
+      clearInterval(interval);
+      setIsUploading(false);
+      setUploadProgress(0);
     }
   };
   
