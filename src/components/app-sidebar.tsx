@@ -12,7 +12,7 @@ import {
   SidebarMenuButton,
   SidebarTrigger,
 } from '@/components/ui/sidebar';
-import { FileUp, LogOut } from 'lucide-react';
+import { FileUp, LayoutList, LogOut } from 'lucide-react';
 
 export function AppSidebar() {
   const pathname = usePathname();
@@ -35,12 +35,24 @@ export function AppSidebar() {
           <SidebarMenuItem>
             <SidebarMenuButton
               asChild
-              isActive={pathname.startsWith('/dashboard')}
+              isActive={pathname === '/dashboard'}
               tooltip={{ children: 'Upload Prices', side: 'right' }}
             >
               <Link href="/dashboard">
                 <FileUp />
                 <span>Upload Prices</span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              asChild
+              isActive={pathname.startsWith('/dashboard/price-proposals')}
+              tooltip={{ children: 'Price Proposals', side: 'right' }}
+            >
+              <Link href="/dashboard/price-proposals">
+                <LayoutList />
+                <span>Price Proposals</span>
               </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>
