@@ -34,7 +34,6 @@ interface PriceTableResult {
     termino_de_energia: {
       titulo: string;
       tabla_precio_clasica_base: { titulo: string; tarifas: TarifaRow[] };
-      tabla_precio_clasica_unica: { titulo: string; tarifas: TarifaRow[] };
     };
   };
 }
@@ -128,10 +127,6 @@ function ResultCard({ result }: { result: PriceTableResult }) {
           <TarifaSection
             title={termino_de_energia.tabla_precio_clasica_base.titulo}
             tarifas={termino_de_energia.tabla_precio_clasica_base.tarifas}
-          />
-          <TarifaSection
-            title={termino_de_energia.tabla_precio_clasica_unica.titulo}
-            tarifas={termino_de_energia.tabla_precio_clasica_unica.tarifas}
           />
         </div>
       </div>
