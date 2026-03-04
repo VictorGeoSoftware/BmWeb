@@ -10,6 +10,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
+import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 
 interface TarifaRow {
@@ -153,17 +154,66 @@ export default function PriceProposalsPage() {
   const [data, setData] = useState<PriceTableResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [refreshProgress, setRefreshProgress] = useState(0);
+
+  const loadPriceProposals = async (showLoadingSkeleton: boolean) => {
+    if (showLoadingSkeleton) {
+      setLoading(true);
+    }
+
+    setError(null);
+
+    try {
+      const response = await fetch('/api/price-proposals', { cache: 'no-store' });
+      const json = (await response.json()) as PriceTableResponse;
+
+      if (!response.ok) {
+        throw new Error('Failed to load price proposals');
+      }
+
+      setData(json);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load price proposals');
+    } finally {
+      if (showLoadingSkeleton) {
+        setLoading(false);
+      }
+      setIsRefreshing(false);
+    }
+  };
 
   useEffect(() => {
-    fetch('/api/price-proposals')
-      .then(res => res.json())
-      .then((json: PriceTableResponse) => {
-        setData(json);
-      })
-      .catch(err => {
-        setError(err instanceof Error ? err.message : 'Failed to load price proposals');
-      })
-      .finally(() => setLoading(false));
+    if (!isRefreshing) {
+      setRefreshProgress(0);
+      return;
+    }
+
+    setRefreshProgress(15);
+    const timer = window.setInterval(() => {
+      setRefreshProgress(prev => (prev >= 92 ? 92 : prev + 6));
+    }, 150);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [isRefreshing]);
+
+  useEffect(() => {
+    void loadPriceProposals(true);
+  }, []);
+
+  useEffect(() => {
+    const handlePriceProposalsCleared = () => {
+      setIsRefreshing(true);
+      void loadPriceProposals(false);
+    };
+
+    window.addEventListener('price-proposals-cleared', handlePriceProposalsCleared);
+
+    return () => {
+      window.removeEventListener('price-proposals-cleared', handlePriceProposalsCleared);
+    };
   }, []);
 
   return (
@@ -174,6 +224,13 @@ export default function PriceProposalsPage() {
           Stored electricity price tables extracted from uploaded proposals.
         </p>
       </header>
+
+      {isRefreshing && (
+        <div className="mb-6 rounded-md border bg-muted/30 px-3 py-2">
+          <div className="mb-2 text-xs font-medium text-muted-foreground">Refreshing results...</div>
+          <Progress value={refreshProgress} className="h-1.5" />
+        </div>
+      )}
 
       {loading && <LoadingSkeleton />}
 
