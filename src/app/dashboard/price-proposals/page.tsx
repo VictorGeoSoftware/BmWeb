@@ -10,8 +10,12 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useToast } from '@/hooks/use-toast';
+import { Trash2 } from 'lucide-react';
 
 interface TarifaRow {
   tarifa: string;
@@ -25,6 +29,7 @@ interface TarifaRow {
 }
 
 interface PriceTableResult {
+  id?: number;
   fileName: string;
   extracted_tables: {
     filename: string;
@@ -44,6 +49,13 @@ interface PriceTableResponse {
   results: PriceTableResult[];
   iva: number;
   impuestoElectrico: number;
+}
+
+interface DeleteSelectedResponse {
+  success: boolean;
+  message: string;
+  deleted_ids?: number[];
+  not_found_ids?: number[];
 }
 
 const P_COLS = ['P1', 'P2', 'P3', 'P4', 'P5', 'P6'] as const;
@@ -95,19 +107,42 @@ function TarifaSection({
   );
 }
 
-function ResultCard({ result }: { result: PriceTableResult }) {
+function ResultCard({
+  result,
+  selected,
+  onSelectionChange,
+}: {
+  result: PriceTableResult;
+  selected: boolean;
+  onSelectionChange: (checked: boolean) => void;
+}) {
   const { extracted_tables } = result;
   const { termino_de_potencia, termino_de_energia } = extracted_tables;
+  const isSelectable = typeof result.id === 'number';
 
   return (
     <div className="rounded-lg border bg-card shadow-sm overflow-hidden">
       <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/30">
-        <div>
-          <p className="font-semibold text-sm">{result.fileName}</p>
-          <p className="text-xs text-muted-foreground">
-            Empresa: <span className="font-medium">{extracted_tables.filename}</span>
-          </p>
+        <div className="flex items-start gap-3">
+          <Checkbox
+            checked={selected}
+            onCheckedChange={checked => onSelectionChange(checked === true)}
+            disabled={!isSelectable}
+            aria-label={`Select proposal ${result.fileName}`}
+            className="mt-0.5"
+          />
+
+          <div>
+            <p className="font-semibold text-sm">{result.fileName}</p>
+            <p className="text-xs text-muted-foreground">
+              Empresa: <span className="font-medium">{extracted_tables.filename}</span>
+            </p>
+          </div>
         </div>
+
+        {!isSelectable && (
+          <span className="text-[11px] text-muted-foreground">Not selectable</span>
+        )}
       </div>
 
       <div className="p-4 space-y-4">
@@ -151,11 +186,14 @@ function LoadingSkeleton() {
 }
 
 export default function PriceProposalsPage() {
+  const { toast } = useToast();
   const [data, setData] = useState<PriceTableResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshProgress, setRefreshProgress] = useState(0);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [isDeletingSelection, setIsDeletingSelection] = useState(false);
 
   const loadPriceProposals = async (showLoadingSkeleton: boolean) => {
     if (showLoadingSkeleton) {
@@ -173,6 +211,10 @@ export default function PriceProposalsPage() {
       }
 
       setData(json);
+      setSelectedIds(prev => {
+        const validIds = new Set((json.results ?? []).map(result => result.id).filter((id): id is number => typeof id === 'number'));
+        return new Set([...prev].filter(id => validIds.has(id)));
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load price proposals');
     } finally {
@@ -205,16 +247,95 @@ export default function PriceProposalsPage() {
 
   useEffect(() => {
     const handlePriceProposalsCleared = () => {
+      setSelectedIds(new Set());
+      setIsRefreshing(true);
+      void loadPriceProposals(false);
+    };
+
+    const handlePriceProposalsRefreshRequested = () => {
       setIsRefreshing(true);
       void loadPriceProposals(false);
     };
 
     window.addEventListener('price-proposals-cleared', handlePriceProposalsCleared);
+    window.addEventListener('price-proposals-refresh-requested', handlePriceProposalsRefreshRequested);
 
     return () => {
       window.removeEventListener('price-proposals-cleared', handlePriceProposalsCleared);
+      window.removeEventListener('price-proposals-refresh-requested', handlePriceProposalsRefreshRequested);
     };
   }, []);
+
+  const toggleSelection = (id: number, checked: boolean) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (checked) {
+        next.add(id);
+      } else {
+        next.delete(id);
+      }
+      return next;
+    });
+  };
+
+  const handleDeleteSelection = async () => {
+    const ids = [...selectedIds];
+    if (ids.length === 0) {
+      return;
+    }
+
+    if (!window.confirm(`This will permanently delete ${ids.length} selected proposal(s). Continue?`)) {
+      return;
+    }
+
+    setIsDeletingSelection(true);
+    try {
+      const response = await fetch('/api/price-proposals', {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ ids }),
+      });
+
+      const payload = (await response.json()) as DeleteSelectedResponse;
+      if (!response.ok) {
+        throw new Error(payload?.message ?? 'Failed to delete selected proposals');
+      }
+
+      const deletedIds = payload.deleted_ids ?? [];
+      setData(prev => {
+        if (!prev) {
+          return prev;
+        }
+
+        return {
+          ...prev,
+          results: prev.results.filter(result => typeof result.id !== 'number' || !deletedIds.includes(result.id)),
+        };
+      });
+
+      setSelectedIds(new Set());
+
+      toast({
+        title: deletedIds.length > 0 ? 'Selection deleted' : 'No proposals deleted',
+        description: payload.message,
+      });
+
+      if ((payload.not_found_ids ?? []).length > 0) {
+        void loadPriceProposals(false);
+      }
+    } catch (deleteError) {
+      toast({
+        variant: 'destructive',
+        title: 'Delete selection failed',
+        description:
+          deleteError instanceof Error ? deleteError.message : 'Unexpected error while deleting selected proposals',
+      });
+    } finally {
+      setIsDeletingSelection(false);
+    }
+  };
 
   return (
     <>
@@ -258,10 +379,33 @@ export default function PriceProposalsPage() {
                   Impuesto Eléctrico:{' '}
                   <span className="font-semibold text-foreground">{data.impuestoElectrico}%</span>
                 </span>
+                {selectedIds.size > 0 && (
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={handleDeleteSelection}
+                    disabled={isDeletingSelection}
+                    className="ml-auto"
+                  >
+                    <Trash2 />
+                    {isDeletingSelection
+                      ? `Deleting ${selectedIds.size}...`
+                      : `Delete Selection (${selectedIds.size})`}
+                  </Button>
+                )}
               </div>
               <div className="space-y-6">
                 {data.results.map((result, i) => (
-                  <ResultCard key={i} result={result} />
+                  <ResultCard
+                    key={result.id ?? `${result.fileName}-${i}`}
+                    result={result}
+                    selected={typeof result.id === 'number' ? selectedIds.has(result.id) : false}
+                    onSelectionChange={checked => {
+                      if (typeof result.id === 'number') {
+                        toggleSelection(result.id, checked);
+                      }
+                    }}
+                  />
                 ))}
               </div>
             </>
