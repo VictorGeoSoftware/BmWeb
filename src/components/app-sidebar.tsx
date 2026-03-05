@@ -15,13 +15,31 @@ import {
 } from '@/components/ui/sidebar';
 import { Progress } from '@/components/ui/progress';
 import { useToast } from '@/hooks/use-toast';
-import { FileUp, LayoutList, LogOut, Trash2 } from 'lucide-react';
+import { Download, FileUp, LayoutList, LogOut, Trash2 } from 'lucide-react';
 
 export function AppSidebar() {
   const pathname = usePathname();
   const { toast } = useToast();
+  const [isFetchingTotalPrices, setIsFetchingTotalPrices] = useState(false);
+  const [fetchTotalPricesProgress, setFetchTotalPricesProgress] = useState(0);
   const [isClearing, setIsClearing] = useState(false);
   const [clearProgress, setClearProgress] = useState(0);
+
+  useEffect(() => {
+    if (!isFetchingTotalPrices) {
+      setFetchTotalPricesProgress(0);
+      return;
+    }
+
+    setFetchTotalPricesProgress(12);
+    const timer = window.setInterval(() => {
+      setFetchTotalPricesProgress(prev => (prev >= 90 ? 90 : prev + 8));
+    }, 180);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [isFetchingTotalPrices]);
 
   useEffect(() => {
     if (!isClearing) {
@@ -38,6 +56,39 @@ export function AppSidebar() {
       window.clearInterval(timer);
     };
   }, [isClearing]);
+
+  const handleFetchTotalPrices = async () => {
+    setIsFetchingTotalPrices(true);
+
+    try {
+      const response = await fetch('/api/price-proposals/fetch-total-prices', {
+        method: 'POST',
+      });
+
+      const responseText = await response.text();
+      const payload = responseText ? JSON.parse(responseText) : {};
+
+      if (!response.ok) {
+        throw new Error(payload?.message ?? 'Failed to fetch Total prices');
+      }
+
+      setFetchTotalPricesProgress(100);
+      window.dispatchEvent(new Event('price-proposals-refresh-requested'));
+
+      toast({
+        title: 'Total prices fetch started',
+        description: payload?.message ?? 'The workflow was triggered successfully.',
+      });
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: 'Fetch Total prices failed',
+        description: error instanceof Error ? error.message : 'Unexpected error while triggering workflow',
+      });
+    } finally {
+      setIsFetchingTotalPrices(false);
+    }
+  };
 
   const handleClearAllData = async () => {
     if (!window.confirm('This will permanently delete all stored data. Continue?')) {
@@ -119,6 +170,21 @@ export function AppSidebar() {
       </SidebarContent>
       <SidebarFooter>
         <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              onClick={handleFetchTotalPrices}
+              disabled={isFetchingTotalPrices}
+              tooltip={{ children: "Fetch Total's prices", side: 'right' }}
+            >
+              <Download />
+              <span>{isFetchingTotalPrices ? 'Fetching prices...' : "Fetch Total's prices"}</span>
+            </SidebarMenuButton>
+            {isFetchingTotalPrices && (
+              <div className="px-2 pt-2 group-data-[collapsible=icon]:hidden">
+                <Progress value={fetchTotalPricesProgress} className="h-1.5" />
+              </div>
+            )}
+          </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton
               onClick={handleClearAllData}
