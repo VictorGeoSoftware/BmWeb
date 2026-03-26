@@ -25,6 +25,57 @@ export async function GET() {
   }
 }
 
+export async function PATCH(request: NextRequest) {
+  try {
+    const body = (await request.json()) as {
+      iva?: unknown;
+      impuestoElectrico?: unknown;
+    };
+
+    const iva = Number(body?.iva);
+    const impuestoElectrico = Number(body?.impuestoElectrico);
+
+    if (!Number.isFinite(iva) || iva < 0 || !Number.isFinite(impuestoElectrico) || impuestoElectrico < 0) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: 'iva and impuestoElectrico must be numbers greater than or equal to 0',
+        },
+        { status: 400 }
+      );
+    }
+
+    const backendBaseUrl = process.env.BM_BACKEND_URL ?? DEFAULT_BACKEND_URL;
+    const response = await fetch(`${backendBaseUrl}/api/v1/price-table-tax-settings`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ iva, impuestoElectrico }),
+    });
+
+    const responseText = await response.text();
+    const payload = responseText ? JSON.parse(responseText) : {};
+
+    if (!response.ok) {
+      return NextResponse.json(
+        {
+          success: false,
+          message:
+            (payload as { message?: string })?.message ??
+            'Failed to update tax settings',
+        },
+        { status: response.status }
+      );
+    }
+
+    return NextResponse.json(payload, { status: response.status });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unexpected error';
+    return NextResponse.json({ success: false, message }, { status: 500 });
+  }
+}
+
 export async function DELETE(request: NextRequest) {
   try {
     const body = (await request.json()) as { ids?: unknown };

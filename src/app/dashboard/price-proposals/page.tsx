@@ -58,6 +58,13 @@ interface DeleteSelectedResponse {
   not_found_ids?: number[];
 }
 
+interface TaxSettingsResponse {
+  success: boolean;
+  iva: number;
+  impuestoElectrico: number;
+  message?: string;
+}
+
 const P_COLS = ['P1', 'P2', 'P3', 'P4', 'P5', 'P6'] as const;
 
 function fmt(v: number | null) {
@@ -194,6 +201,9 @@ export default function PriceProposalsPage() {
   const [refreshProgress, setRefreshProgress] = useState(0);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [isDeletingSelection, setIsDeletingSelection] = useState(false);
+  const [ivaDraft, setIvaDraft] = useState('');
+  const [impuestoElectricoDraft, setImpuestoElectricoDraft] = useState('');
+  const [savingTaxField, setSavingTaxField] = useState<'iva' | 'impuestoElectrico' | null>(null);
 
   const loadPriceProposals = async (showLoadingSkeleton: boolean) => {
     if (showLoadingSkeleton) {
@@ -211,6 +221,8 @@ export default function PriceProposalsPage() {
       }
 
       setData(json);
+      setIvaDraft(String(json.iva));
+      setImpuestoElectricoDraft(String(json.impuestoElectrico));
       setSelectedIds(prev => {
         const validIds = new Set((json.results ?? []).map(result => result.id).filter((id): id is number => typeof id === 'number'));
         return new Set([...prev].filter(id => validIds.has(id)));
@@ -337,6 +349,113 @@ export default function PriceProposalsPage() {
     }
   };
 
+  const persistTaxSettings = async ({
+    iva,
+    impuestoElectrico,
+    savingField,
+  }: {
+    iva: number;
+    impuestoElectrico: number;
+    savingField: 'iva' | 'impuestoElectrico';
+  }) => {
+    setSavingTaxField(savingField);
+    try {
+      const response = await fetch('/api/price-proposals', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ iva, impuestoElectrico }),
+      });
+
+      const payload = (await response.json()) as TaxSettingsResponse;
+      if (!response.ok) {
+        throw new Error(payload?.message ?? 'Failed to update tax settings');
+      }
+
+      setData(prev => {
+        if (!prev) {
+          return prev;
+        }
+
+        return {
+          ...prev,
+          iva: payload.iva,
+          impuestoElectrico: payload.impuestoElectrico,
+        };
+      });
+      setIvaDraft(String(payload.iva));
+      setImpuestoElectricoDraft(String(payload.impuestoElectrico));
+
+      toast({
+        title: 'Tax settings updated',
+        description: `IVA ${payload.iva}% · Impuesto Eléctrico ${payload.impuestoElectrico}%`,
+      });
+    } catch (taxError) {
+      toast({
+        variant: 'destructive',
+        title: 'Failed to update tax settings',
+        description: taxError instanceof Error ? taxError.message : 'Unexpected error while updating tax settings',
+      });
+    } finally {
+      setSavingTaxField(null);
+    }
+  };
+
+  const handleConfirmIva = async () => {
+    if (!data) {
+      return;
+    }
+
+    const parsedIva = Number(ivaDraft);
+    if (!Number.isFinite(parsedIva) || parsedIva < 0) {
+      toast({
+        variant: 'destructive',
+        title: 'Invalid IVA value',
+        description: 'IVA must be a number greater than or equal to 0.',
+      });
+      return;
+    }
+
+    await persistTaxSettings({
+      iva: parsedIva,
+      impuestoElectrico: data.impuestoElectrico,
+      savingField: 'iva',
+    });
+  };
+
+  const handleConfirmImpuestoElectrico = async () => {
+    if (!data) {
+      return;
+    }
+
+    const parsedImpuestoElectrico = Number(impuestoElectricoDraft);
+    if (!Number.isFinite(parsedImpuestoElectrico) || parsedImpuestoElectrico < 0) {
+      toast({
+        variant: 'destructive',
+        title: 'Invalid impuesto eléctrico value',
+        description: 'Impuesto Eléctrico must be a number greater than or equal to 0.',
+      });
+      return;
+    }
+
+    await persistTaxSettings({
+      iva: data.iva,
+      impuestoElectrico: parsedImpuestoElectrico,
+      savingField: 'impuestoElectrico',
+    });
+  };
+
+  const parsedIvaDraft = Number(ivaDraft);
+  const parsedImpuestoElectricoDraft = Number(impuestoElectricoDraft);
+  const isIvaDraftValid = Number.isFinite(parsedIvaDraft) && parsedIvaDraft >= 0;
+  const isImpuestoElectricoDraftValid =
+    Number.isFinite(parsedImpuestoElectricoDraft) && parsedImpuestoElectricoDraft >= 0;
+  const hasIvaChanged = data ? parsedIvaDraft !== data.iva : false;
+  const hasImpuestoElectricoChanged = data
+    ? parsedImpuestoElectricoDraft !== data.impuestoElectrico
+    : false;
+
   return (
     <>
       <header className="mb-8">
@@ -374,11 +493,54 @@ export default function PriceProposalsPage() {
                   <span className="font-semibold text-foreground">{data.results.length}</span> result
                   {data.results.length !== 1 ? 's' : ''}
                 </span>
-                <span>IVA: <span className="font-semibold text-foreground">{data.iva}%</span></span>
-                <span>
-                  Impuesto Eléctrico:{' '}
-                  <span className="font-semibold text-foreground">{data.impuestoElectrico}%</span>
-                </span>
+                <label className="flex items-center gap-2">
+                  <span>IVA:</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={ivaDraft}
+                    onChange={event => setIvaDraft(event.target.value)}
+                    className="h-8 w-24 rounded-md border border-input bg-background px-2 text-foreground"
+                  />
+                  <span>%</span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleConfirmIva}
+                    disabled={
+                      savingTaxField !== null ||
+                      !isIvaDraftValid ||
+                      !hasIvaChanged
+                    }
+                  >
+                    {savingTaxField === 'iva' ? 'Saving...' : 'Save'}
+                  </Button>
+                </label>
+                <label className="flex items-center gap-2">
+                  <span>Impuesto Eléctrico:</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={impuestoElectricoDraft}
+                    onChange={event => setImpuestoElectricoDraft(event.target.value)}
+                    className="h-8 w-24 rounded-md border border-input bg-background px-2 text-foreground"
+                  />
+                  <span>%</span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleConfirmImpuestoElectrico}
+                    disabled={
+                      savingTaxField !== null ||
+                      !isImpuestoElectricoDraftValid ||
+                      !hasImpuestoElectricoChanged
+                    }
+                  >
+                    {savingTaxField === 'impuestoElectrico' ? 'Saving...' : 'Save'}
+                  </Button>
+                </label>
                 {selectedIds.size > 0 && (
                   <Button
                     variant="destructive"
