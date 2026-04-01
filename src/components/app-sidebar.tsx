@@ -15,7 +15,7 @@ import {
 } from '@/components/ui/sidebar';
 import { Progress } from '@/components/ui/progress';
 import { useToast } from '@/hooks/use-toast';
-import { Download, FileUp, LayoutList, LogOut, Trash2 } from 'lucide-react';
+import { Download, FileUp, LayoutList, LogOut, Trash2, Users } from 'lucide-react';
 
 export function AppSidebar() {
   const pathname = usePathname();
@@ -163,6 +163,18 @@ export function AppSidebar() {
               <Link href="/dashboard/price-proposals">
                 <LayoutList />
                 <span>Price Proposals</span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              asChild
+              isActive={pathname.startsWith('/dashboard/users')}
+              tooltip={{ children: 'Usuarios', side: 'right' }}
+            >
+              <Link href="/dashboard/users">
+                <Users />
+                <span>Usuarios</span>
               </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>
