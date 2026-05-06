@@ -28,9 +28,28 @@ interface UserActivityResponse {
   message?: string;
 }
 
-function formatTimestamp(timestamp: number | null): string {
+interface UserFirstConnectionItem {
+  email: string;
+  firstConnectedAt: number | null;
+}
+
+interface UserFirstConnectionResponse {
+  success: boolean;
+  users: UserFirstConnectionItem[];
+  message?: string;
+}
+
+function formatDate(timestamp: number | null): string {
   if (!timestamp) return '—';
-  return new Date(timestamp).toLocaleString();
+
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return '—';
+
+  const day = String(date.getDate()).padStart(2, '0');
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const year = date.getFullYear();
+
+  return `${day}-${month}-${year}`;
 }
 
 function LoadingSkeleton() {
@@ -47,6 +66,7 @@ function LoadingSkeleton() {
 
 export default function UsersPage() {
   const [users, setUsers] = useState<UserActivityItem[]>([]);
+  const [firstConnectionByEmail, setFirstConnectionByEmail] = useState<Record<string, number | null>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -57,14 +77,31 @@ export default function UsersPage() {
 
     try {
       setError(null);
-      const response = await fetch('/api/users/activity', { cache: 'no-store' });
-      const payload = (await response.json()) as UserActivityResponse;
+      const [usersResponse, firstConnectionsResponse] = await Promise.all([
+        fetch('/api/users/activity', { cache: 'no-store' }),
+        fetch('/api/users/activity/first-connection', { cache: 'no-store' }),
+      ]);
+      const usersPayload = (await usersResponse.json()) as UserActivityResponse;
+      const firstConnectionsPayload =
+        (await firstConnectionsResponse.json()) as UserFirstConnectionResponse;
 
-      if (!response.ok) {
-        throw new Error(payload?.message ?? 'Failed to load users activity');
+      if (!usersResponse.ok) {
+        throw new Error(usersPayload?.message ?? 'Failed to load users activity');
       }
 
-      setUsers(payload.users ?? []);
+      if (!firstConnectionsResponse.ok) {
+        throw new Error(
+          firstConnectionsPayload?.message ?? 'Failed to load users first connection activity'
+        );
+      }
+
+      setUsers(usersPayload.users ?? []);
+      setFirstConnectionByEmail(
+        (firstConnectionsPayload.users ?? []).reduce<Record<string, number | null>>((acc, item) => {
+          acc[item.email] = item.firstConnectedAt;
+          return acc;
+        }, {})
+      );
     } catch (fetchError) {
       setError(fetchError instanceof Error ? fetchError.message : 'Failed to load users activity');
     } finally {
@@ -142,6 +179,7 @@ export default function UsersPage() {
                 <TableHead>Email</TableHead>
                 <TableHead>Estado</TableHead>
                 <TableHead className="text-right">Uso mensual</TableHead>
+                <TableHead>Fecha inicio</TableHead>
                 <TableHead>Última conexión</TableHead>
                 <TableHead>Última desconexión</TableHead>
                 <TableHead>Actualizado</TableHead>
@@ -158,9 +196,10 @@ export default function UsersPage() {
                     </Badge>
                   </TableCell>
                   <TableCell className="text-right font-semibold">{user.monthlyUsageCount}</TableCell>
-                  <TableCell>{formatTimestamp(user.lastConnectedAt)}</TableCell>
-                  <TableCell>{formatTimestamp(user.lastDisconnectedAt)}</TableCell>
-                  <TableCell>{formatTimestamp(user.updatedAt)}</TableCell>
+                  <TableCell>{formatDate(firstConnectionByEmail[user.email] ?? null)}</TableCell>
+                  <TableCell>{formatDate(user.lastConnectedAt)}</TableCell>
+                  <TableCell>{formatDate(user.lastDisconnectedAt)}</TableCell>
+                  <TableCell>{formatDate(user.updatedAt)}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
