@@ -52,6 +52,22 @@ function formatDate(timestamp: number | null): string {
   return `${day}-${month}-${year}`;
 }
 
+function formatDateTime(timestamp: number | null): string {
+  if (!timestamp) return '—';
+
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return '—';
+
+  const day = String(date.getDate()).padStart(2, '0');
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const year = date.getFullYear();
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  const seconds = String(date.getSeconds()).padStart(2, '0');
+
+  return `${day}-${month}-${year}, ${hours}:${minutes}:${seconds}`;
+}
+
 function LoadingSkeleton() {
   return (
     <div className="space-y-3">
@@ -197,9 +213,9 @@ export default function UsersPage() {
                   </TableCell>
                   <TableCell className="text-right font-semibold">{user.monthlyUsageCount}</TableCell>
                   <TableCell>{formatDate(firstConnectionByEmail[user.email] ?? null)}</TableCell>
-                  <TableCell>{formatDate(user.lastConnectedAt)}</TableCell>
-                  <TableCell>{formatDate(user.lastDisconnectedAt)}</TableCell>
-                  <TableCell>{formatDate(user.updatedAt)}</TableCell>
+                  <TableCell>{formatDateTime(user.lastConnectedAt)}</TableCell>
+                  <TableCell>{formatDateTime(user.lastDisconnectedAt)}</TableCell>
+                  <TableCell>{formatDateTime(user.updatedAt)}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
