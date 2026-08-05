@@ -15,7 +15,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/hooks/use-toast';
-import { Trash2 } from 'lucide-react';
+import { Search, Trash2, X } from 'lucide-react';
 
 interface TarifaRow {
   tarifa: string;
@@ -204,6 +204,7 @@ export default function PriceProposalsPage() {
   const [ivaDraft, setIvaDraft] = useState('');
   const [impuestoElectricoDraft, setImpuestoElectricoDraft] = useState('');
   const [savingTaxField, setSavingTaxField] = useState<'iva' | 'impuestoElectrico' | null>(null);
+  const [filterQuery, setFilterQuery] = useState('');
 
   const loadPriceProposals = async (showLoadingSkeleton: boolean) => {
     if (showLoadingSkeleton) {
@@ -456,6 +457,32 @@ export default function PriceProposalsPage() {
     ? parsedImpuestoElectricoDraft !== data.impuestoElectrico
     : false;
 
+  const normalizeForFilter = (value: string) =>
+    value
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase();
+
+  const stripTerminoLabel = (titulo: string) =>
+    titulo.replace(/^t[ée]rmino de (potencia|energ[íi]a)\s*[-–:]?\s*/i, '');
+
+  const normalizedFilter = normalizeForFilter(filterQuery.trim());
+  const filteredResults = (data?.results ?? []).filter(result => {
+    if (normalizedFilter.length === 0) {
+      return true;
+    }
+
+    const { extracted_tables } = result;
+    const proposalName = normalizeForFilter(
+      stripTerminoLabel(extracted_tables.termino_de_potencia.titulo)
+    );
+    return (
+      proposalName.includes(normalizedFilter) ||
+      normalizeForFilter(result.fileName).includes(normalizedFilter) ||
+      normalizeForFilter(extracted_tables.filename).includes(normalizedFilter)
+    );
+  });
+
   return (
     <>
       <header className="mb-8">
@@ -488,10 +515,10 @@ export default function PriceProposalsPage() {
             </div>
           ) : (
             <>
-              <div className="flex items-center gap-4 mb-6 text-sm text-muted-foreground">
+              <div className="flex items-center gap-4 mb-3 text-sm text-muted-foreground">
                 <span>
-                  <span className="font-semibold text-foreground">{data.results.length}</span> result
-                  {data.results.length !== 1 ? 's' : ''}
+                  <span className="font-semibold text-foreground">{filteredResults.length}</span> result
+                  {filteredResults.length !== 1 ? 's' : ''}
                 </span>
                 <label className="flex items-center gap-2">
                   <span>IVA:</span>
@@ -501,7 +528,7 @@ export default function PriceProposalsPage() {
                     step="0.01"
                     value={ivaDraft}
                     onChange={event => setIvaDraft(event.target.value)}
-                    className="h-8 w-24 rounded-md border border-input bg-background px-2 text-foreground"
+                    className="h-8 w-24 rounded-md border border-input bg-card px-2 text-foreground"
                   />
                   <span>%</span>
                   <Button
@@ -525,7 +552,7 @@ export default function PriceProposalsPage() {
                     step="0.01"
                     value={impuestoElectricoDraft}
                     onChange={event => setImpuestoElectricoDraft(event.target.value)}
-                    className="h-8 w-24 rounded-md border border-input bg-background px-2 text-foreground"
+                    className="h-8 w-24 rounded-md border border-input bg-card px-2 text-foreground"
                   />
                   <span>%</span>
                   <Button
@@ -556,8 +583,34 @@ export default function PriceProposalsPage() {
                   </Button>
                 )}
               </div>
+              <div className="relative mb-6">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+                <input
+                  type="text"
+                  value={filterQuery}
+                  onChange={event => setFilterQuery(event.target.value)}
+                  placeholder="Filter proposals by name, file or company..."
+                  className="h-9 w-full rounded-md border border-input bg-card pl-9 pr-9 text-sm text-foreground placeholder:text-muted-foreground"
+                  aria-label="Filter price proposals"
+                />
+                {filterQuery.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setFilterQuery('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    aria-label="Clear filter"
+                  >
+                    <X className="size-4" />
+                  </button>
+                )}
+              </div>
+              {filteredResults.length === 0 ? (
+                <div className="rounded-lg border border-dashed p-12 text-center text-muted-foreground">
+                  No price proposals match "{filterQuery.trim()}".
+                </div>
+              ) : (
               <div className="space-y-6">
-                {data.results.map((result, i) => (
+                {filteredResults.map((result, i) => (
                   <ResultCard
                     key={result.id ?? `${result.fileName}-${i}`}
                     result={result}
@@ -570,6 +623,7 @@ export default function PriceProposalsPage() {
                   />
                 ))}
               </div>
+              )}
             </>
           )}
         </>
