@@ -7,8 +7,9 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { LogIn } from 'lucide-react';
-import { signInWithEmailAndPassword } from 'firebase/auth';
+import { signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import { auth } from '@/lib/firebase/client';
+import { checkAdminAccess } from '@/lib/admin-access';
 
 function getLoginErrorMessage(error: unknown): string {
   if (typeof error === 'object' && error !== null && 'code' in error) {
@@ -35,6 +36,19 @@ export default function LoginForm() {
 
     try {
       const credentials = await signInWithEmailAndPassword(auth, email, password);
+
+      // BmWeb is admin-only: verify the account is on the backend admin
+      // allowlist before syncing user data or entering the dashboard.
+      const adminAccess = await checkAdminAccess();
+      if (adminAccess !== 'granted') {
+        await signOut(auth);
+        throw new Error(
+          adminAccess === 'denied'
+            ? 'This account is not authorized to access the dashboard.'
+            : 'Could not verify admin access. Please try again later.'
+        );
+      }
+
       const idToken = await credentials.user.getIdToken();
 
       const syncResponse = await fetch('/api/user-data', {
