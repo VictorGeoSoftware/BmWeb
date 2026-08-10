@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { onAuthStateChanged } from 'firebase/auth';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { auth } from '@/lib/firebase/client';
+import { checkAdminAccess } from '@/lib/admin-access';
 
 type AuthGuardProps = {
   children: React.ReactNode;
@@ -16,12 +17,28 @@ export default function AuthGuard({ children }: AuthGuardProps) {
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setIsAuthenticated(Boolean(user));
-      setIsCheckingAuth(false);
-
       if (!user) {
+        setIsAuthenticated(false);
+        setIsCheckingAuth(false);
         router.replace('/');
+        return;
       }
+
+      // BmWeb is admin-only: drop sessions whose account is not on the
+      // backend admin allowlist (e.g. access revoked while logged in).
+      // On verification errors the session is kept so a backend outage
+      // does not kick admins out.
+      void checkAdminAccess().then(async (result) => {
+        if (result === 'denied') {
+          await signOut(auth);
+          setIsAuthenticated(false);
+          setIsCheckingAuth(false);
+          router.replace('/');
+          return;
+        }
+        setIsAuthenticated(true);
+        setIsCheckingAuth(false);
+      });
     });
 
     return () => unsubscribe();
