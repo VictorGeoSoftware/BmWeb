@@ -35,10 +35,13 @@ export default function LoginForm() {
     setLoading(true);
 
     try {
-      const credentials = await signInWithEmailAndPassword(auth, email, password);
+      await signInWithEmailAndPassword(auth, email, password);
 
-      // BmWeb is admin-only: verify the account is on the backend admin
-      // allowlist before syncing user data or entering the dashboard.
+      // BmWeb is admin-only: the sole authorization gate is the backend admin
+      // allowlist (`admin_users`). Deliberately no `/api/user-data` sync here:
+      // that endpoint is BmApp's login handshake and enforces the *app*
+      // allowlist (`granted_users`) plus one-device-per-account binding, which
+      // must not apply to dashboard administrators.
       const adminAccess = await checkAdminAccess();
       if (adminAccess !== 'granted') {
         await signOut(auth);
@@ -47,32 +50,6 @@ export default function LoginForm() {
             ? 'This account is not authorized to access the dashboard.'
             : 'Could not verify admin access. Please try again later.'
         );
-      }
-
-      const idToken = await credentials.user.getIdToken();
-
-      const syncResponse = await fetch('/api/user-data', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          idToken,
-          userData: {
-            uid: credentials.user.uid,
-            email: credentials.user.email,
-            displayName: credentials.user.displayName,
-            photoURL: credentials.user.photoURL,
-            providerIds: credentials.user.providerData
-              .map((provider) => provider.providerId)
-              .filter(Boolean),
-          },
-        }),
-      });
-
-      if (!syncResponse.ok) {
-        const responseText = await syncResponse.text();
-        throw new Error(responseText || 'Failed to sync user data with backend.');
       }
 
       toast({
