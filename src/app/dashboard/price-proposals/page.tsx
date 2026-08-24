@@ -16,6 +16,7 @@ import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/hooks/use-toast';
 import { Search, Trash2, X } from 'lucide-react';
+import { authFetch } from '@/lib/api-client';
 
 interface TarifaRow {
   tarifa: string;
@@ -214,7 +215,7 @@ export default function PriceProposalsPage() {
     setError(null);
 
     try {
-      const response = await fetch('/api/price-proposals', { cache: 'no-store' });
+      const response = await authFetch('/api/price-proposals', { cache: 'no-store' });
       const json = (await response.json()) as PriceTableResponse;
 
       if (!response.ok) {
@@ -303,7 +304,7 @@ export default function PriceProposalsPage() {
 
     setIsDeletingSelection(true);
     try {
-      const response = await fetch('/api/price-proposals', {
+      const response = await authFetch('/api/price-proposals', {
         method: 'DELETE',
         headers: {
           'Content-Type': 'application/json',
@@ -361,7 +362,7 @@ export default function PriceProposalsPage() {
   }) => {
     setSavingTaxField(savingField);
     try {
-      const response = await fetch('/api/price-proposals', {
+      const response = await authFetch('/api/price-proposals', {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',

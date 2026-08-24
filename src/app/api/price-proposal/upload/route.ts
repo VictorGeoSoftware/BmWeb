@@ -1,8 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { authorizationHeader, MISSING_AUTH_RESPONSE } from '@/lib/backend-auth';
 
 const DEFAULT_BACKEND_URL = 'http://localhost:8081';
 
 export async function POST(request: NextRequest) {
+  const authorization = authorizationHeader(request);
+  if (!authorization) {
+    return NextResponse.json(MISSING_AUTH_RESPONSE, { status: 401 });
+  }
+
   try {
     const formData = await request.formData();
     const file = formData.get('file');
@@ -27,6 +33,7 @@ export async function POST(request: NextRequest) {
     const backendBaseUrl = process.env.BM_BACKEND_URL ?? DEFAULT_BACKEND_URL;
     const backendResponse = await fetch(`${backendBaseUrl}/api/v1/upload-price-proposal`, {
       method: 'POST',
+      headers: { Authorization: authorization },
       body: backendFormData,
     });
 

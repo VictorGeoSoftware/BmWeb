@@ -1,12 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { authorizationHeader, MISSING_AUTH_RESPONSE } from '@/lib/backend-auth';
 
 const DEFAULT_BACKEND_URL = 'http://localhost:8081';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const authorization = authorizationHeader(request);
+  if (!authorization) {
+    return NextResponse.json(MISSING_AUTH_RESPONSE, { status: 401 });
+  }
+
   try {
     const backendBaseUrl = process.env.BM_BACKEND_URL ?? DEFAULT_BACKEND_URL;
     const response = await fetch(`${backendBaseUrl}/api/v1/price-table-results`, {
       cache: 'no-store',
+      headers: { Authorization: authorization },
     });
 
     if (!response.ok) {
@@ -26,6 +33,11 @@ export async function GET() {
 }
 
 export async function PATCH(request: NextRequest) {
+  const authorization = authorizationHeader(request);
+  if (!authorization) {
+    return NextResponse.json(MISSING_AUTH_RESPONSE, { status: 401 });
+  }
+
   try {
     const body = (await request.json()) as {
       iva?: unknown;
@@ -50,6 +62,7 @@ export async function PATCH(request: NextRequest) {
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
+        Authorization: authorization,
       },
       body: JSON.stringify({ iva, impuestoElectrico }),
     });
@@ -77,6 +90,11 @@ export async function PATCH(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
+  const authorization = authorizationHeader(request);
+  if (!authorization) {
+    return NextResponse.json(MISSING_AUTH_RESPONSE, { status: 401 });
+  }
+
   try {
     const body = (await request.json()) as { ids?: unknown };
     const ids = Array.isArray(body?.ids) ? body.ids : [];
@@ -96,6 +114,7 @@ export async function DELETE(request: NextRequest) {
       method: 'DELETE',
       headers: {
         'Content-Type': 'application/json',
+        Authorization: authorization,
       },
       body: JSON.stringify({ ids }),
     });
