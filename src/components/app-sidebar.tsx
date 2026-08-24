@@ -16,6 +16,7 @@ import {
 import { Progress } from '@/components/ui/progress';
 import { useToast } from '@/hooks/use-toast';
 import { Download, FileUp, LayoutList, LogOut, Receipt, Trash2, Users } from 'lucide-react';
+import { authFetch } from '@/lib/api-client';
 
 export function AppSidebar() {
   const pathname = usePathname();
@@ -61,7 +62,7 @@ export function AppSidebar() {
     setIsFetchingTotalPrices(true);
 
     try {
-      const response = await fetch('/api/price-proposals/fetch-total-prices', {
+      const response = await authFetch('/api/price-proposals/fetch-total-prices', {
         method: 'POST',
       });
 
@@ -98,7 +99,7 @@ export function AppSidebar() {
     setIsClearing(true);
 
     try {
-      const response = await fetch('/api/price-proposals/clear-all-data', {
+      const response = await authFetch('/api/price-proposals/clear-all-data', {
         method: 'DELETE',
       });
 

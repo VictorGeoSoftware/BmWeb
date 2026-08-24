@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { Progress } from '@/components/ui/progress';
+import { authFetch } from '@/lib/api-client';
 
 export default function PdfUpload() {
   const [files, setFiles] = useState<File[]>([]);
@@ -78,7 +79,7 @@ export default function PdfUpload() {
       const formData = new FormData();
       formData.append('file', files[0]);
 
-      const response = await fetch('/api/price-proposal/upload', {
+      const response = await authFetch('/api/price-proposal/upload', {
         method: 'POST',
         body: formData,
       });
