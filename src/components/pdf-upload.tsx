@@ -121,25 +121,32 @@ export default function PdfUpload() {
   const addFiles = (incoming: FileList | null) => {
     if (!incoming || incoming.length === 0) return;
 
-    setItems(prev => {
-      const { accepted, rejected } = selectPdfFiles(Array.from(incoming), prev.map(item => item.file));
+    // Validation runs here, not inside the `setItems` updater below. Updaters
+    // must be pure: React replays them (twice under StrictMode, and again on
+    // re-entrant renders), which would fire the "skipped files" toast more than
+    // once for a single selection.
+    const { accepted, rejected } = selectPdfFiles(
+      Array.from(incoming),
+      items.map(item => item.file)
+    );
 
-      if (rejected.length > 0) {
-        const detail = rejected
-          .slice(0, 3)
-          .map(entry => `${entry.file.name}: ${entry.reason}`)
-          .join(' · ');
-        const more = rejected.length > 3 ? ` (+${rejected.length - 3} more)` : '';
-        toast({
-          variant: 'destructive',
-          title: `${rejected.length} file${rejected.length === 1 ? '' : 's'} skipped`,
-          description: `${detail}${more}`,
-        });
-      }
+    if (rejected.length > 0) {
+      const detail = rejected
+        .slice(0, 3)
+        .map(entry => `${entry.file.name}: ${entry.reason}`)
+        .join(' · ');
+      const more = rejected.length > 3 ? ` (+${rejected.length - 3} more)` : '';
+      toast({
+        variant: 'destructive',
+        title: `${rejected.length} file${rejected.length === 1 ? '' : 's'} skipped`,
+        description: `${detail}${more}`,
+      });
+    }
 
-      if (accepted.length === 0) return prev;
-      return [...prev, ...createUploadItems(accepted)];
-    });
+    if (accepted.length > 0) {
+      const added = createUploadItems(accepted);
+      setItems(prev => [...prev, ...added]);
+    }
 
     setSummary(null);
   };
@@ -227,22 +234,14 @@ export default function PdfUpload() {
     }
   };
 
+  // Both entry points below can be handed an empty list; `runBatch` returns
+  // early in that case, so neither needs its own guard.
   const handleUpload = () => {
-    const pending = items.filter(item => item.status === 'pending');
-    if (pending.length === 0) {
-      toast({
-        variant: 'destructive',
-        title: 'Nothing to upload',
-        description: 'Select at least one PDF price proposal.',
-      });
-      return;
-    }
-    void runBatch(pending);
+    void runBatch(items.filter(item => item.status === 'pending'));
   };
 
   const handleRetryFailed = () => {
     const retryable = items.filter(item => item.status === 'failed' || item.status === 'cancelled');
-    if (retryable.length === 0) return;
     const reset = retryable.map(item => ({ ...item, status: 'pending' as const, error: undefined }));
     setItems(prev =>
       prev.map(item => reset.find(candidate => candidate.id === item.id) ?? item)
