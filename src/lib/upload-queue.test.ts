@@ -143,6 +143,25 @@ describe('selectPdfFiles', () => {
     ]);
   });
 
+  it('can exclude settled files from the next batch without losing duplicate protection', () => {
+    const settled = Array.from({ length: MAX_BATCH_FILES }, (_, i) =>
+      makeFile(`settled-${i}.pdf`)
+    );
+    const duplicate = makeFile('settled-0.pdf');
+    const nextBatch = Array.from({ length: MAX_BATCH_FILES }, (_, i) =>
+      makeFile(`next-${i}.pdf`)
+    );
+
+    const { accepted, rejected } = selectPdfFiles(
+      [duplicate, ...nextBatch],
+      settled,
+      0
+    );
+
+    expect(accepted).toEqual(nextBatch);
+    expect(rejected).toEqual([{ file: duplicate, reason: 'Already selected' }]);
+  });
+
   it('applies the rules in order: type, then size, then duplicate, then limit', () => {
     // A file can fail several rules at once; the reported reason should be the
     // most specific thing wrong with it, not whichever check happens to run last.

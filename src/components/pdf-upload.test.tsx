@@ -119,7 +119,7 @@ describe('PdfUpload', () => {
 
       await user.upload(fileInput(), [pdf('a.pdf'), pdf('b.pdf'), pdf('c.pdf')]);
 
-      expect(screen.getByText(`Selected files (3/${MAX_BATCH_FILES})`)).toBeInTheDocument();
+      expect(screen.getByText(`Files (3/${MAX_BATCH_FILES} in current batch)`)).toBeInTheDocument();
       expect(screen.getByText('a.pdf')).toBeInTheDocument();
       expect(screen.getByText('c.pdf')).toBeInTheDocument();
     });
@@ -139,7 +139,7 @@ describe('PdfUpload', () => {
       await user.upload(fileInput(), [pdf('a.pdf')]);
       await user.upload(fileInput(), [pdf('b.pdf')]);
 
-      expect(screen.getByText(`Selected files (2/${MAX_BATCH_FILES})`)).toBeInTheDocument();
+      expect(screen.getByText(`Files (2/${MAX_BATCH_FILES} in current batch)`)).toBeInTheDocument();
     });
 
     it('keeps the PDFs and warns about the files it skipped', async () => {
@@ -228,7 +228,7 @@ describe('PdfUpload', () => {
       await user.upload(fileInput(), [pdf('proposal.pdf', 2048)]);
       await user.upload(fileInput(), [pdf('proposal.pdf', 2048)]);
 
-      expect(screen.getByText(`Selected files (1/${MAX_BATCH_FILES})`)).toBeInTheDocument();
+      expect(screen.getByText(`Files (1/${MAX_BATCH_FILES} in current batch)`)).toBeInTheDocument();
       expect(toastMock).toHaveBeenCalledWith(
         expect.objectContaining({ description: 'proposal.pdf: Already selected' })
       );
@@ -254,13 +254,13 @@ describe('PdfUpload', () => {
       await user.click(screen.getByRole('button', { name: /clear all/i }));
 
       expect(screen.queryByText('a.pdf')).not.toBeInTheDocument();
-      expect(screen.queryByText(/Selected files/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/in current batch/)).not.toBeInTheDocument();
     });
 
     it('shows no file list before anything is selected', () => {
       render(<PdfUpload />);
 
-      expect(screen.queryByText(/Selected files/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/in current batch/)).not.toBeInTheDocument();
       expect(uploadButton()).toBeDisabled();
     });
   });
@@ -365,6 +365,25 @@ describe('PdfUpload', () => {
       await waitFor(() => expect(authFetchMock).toHaveBeenCalledTimes(1));
       const body = authFetchMock.mock.calls[0][1]?.body as FormData;
       expect((body.get('file') as File).name).toBe('b.pdf');
+    });
+
+    it('frees settled files from the next batch limit while keeping them visible', async () => {
+      const user = userEvent.setup();
+      render(<PdfUpload />);
+      const firstBatch = Array.from({ length: MAX_BATCH_FILES }, (_, i) => pdf(`first-${i}.pdf`));
+      await user.upload(fileInput(), firstBatch);
+      await user.click(uploadButton());
+      await screen.findByText('Batch finished');
+
+      const nextBatch = Array.from({ length: MAX_BATCH_FILES }, (_, i) => pdf(`next-${i}.pdf`));
+      await user.upload(fileInput(), nextBatch);
+
+      expect(screen.getByText(`Files (${MAX_BATCH_FILES}/${MAX_BATCH_FILES} in current batch)`)).toBeInTheDocument();
+      expect(screen.getByText('first-0.pdf')).toBeInTheDocument();
+      expect(screen.getByText('next-29.pdf')).toBeInTheDocument();
+      expect(toastMock).not.toHaveBeenCalledWith(
+        expect.objectContaining({ description: expect.stringContaining('Batch limit') })
+      );
     });
   });
 

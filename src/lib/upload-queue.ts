@@ -62,16 +62,24 @@ function formatMegabytes(bytes: number): string {
 /**
  * Validates an incoming selection against what is already staged.
  *
+ * `batchFileCount` is separate from `alreadySelected` because settled files can
+ * remain visible (and should still be detected as duplicates) without
+ * consuming capacity in the next batch.
+ *
  * Returns both halves so the caller can stage the good files and tell the user
  * precisely which ones were dropped and why — a silent `slice()` is how the
  * previous single-file limit confused people.
  */
-export function selectPdfFiles(incoming: File[], alreadySelected: File[] = []): FileSelection {
+export function selectPdfFiles(
+  incoming: File[],
+  alreadySelected: File[] = [],
+  batchFileCount = alreadySelected.length
+): FileSelection {
   const accepted: File[] = [];
   const rejected: RejectedFile[] = [];
 
   const seen = new Set(alreadySelected.map(file => `${file.name}:${file.size}`));
-  let remainingSlots = MAX_BATCH_FILES - alreadySelected.length;
+  let remainingSlots = MAX_BATCH_FILES - batchFileCount;
 
   for (const file of incoming) {
     if (!isPdf(file)) {
