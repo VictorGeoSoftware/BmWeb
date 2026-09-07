@@ -81,21 +81,25 @@ export default function PdfUpload() {
   const [isUploading, setIsUploading] = useState(false);
   const [isDragActive, setIsDragActive] = useState(false);
   const [summary, setSummary] = useState<UploadSummary | null>(null);
+  const [activeBatchIds, setActiveBatchIds] = useState<string[]>([]);
   const { toast } = useToast();
   const inputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   const counts = useMemo(() => {
-    const settled = items.filter(item => item.status !== 'pending' && item.status !== 'uploading').length;
+    const activeIds = new Set(activeBatchIds);
+    const activeItems = items.filter(item => activeIds.has(item.id));
+    const settled = activeItems.filter(item => item.status !== 'pending' && item.status !== 'uploading').length;
     return {
-      total: items.length,
+      total: activeItems.length,
+      batch: items.filter(item => item.status === 'pending' || item.status === 'uploading').length,
       settled,
       done: items.filter(item => item.status === 'done').length,
       failed: items.filter(item => item.status === 'failed').length,
       cancelled: items.filter(item => item.status === 'cancelled').length,
-      progress: items.length === 0 ? 0 : Math.round((settled / items.length) * 100),
+      progress: activeItems.length === 0 ? 0 : Math.round((settled / activeItems.length) * 100),
     };
-  }, [items]);
+  }, [activeBatchIds, items]);
 
   const retryableCount = counts.failed + counts.cancelled;
 
@@ -125,9 +129,13 @@ export default function PdfUpload() {
     // must be pure: React replays them (twice under StrictMode, and again on
     // re-entrant renders), which would fire the "skipped files" toast more than
     // once for a single selection.
+    const batchFileCount = items.filter(
+      item => item.status === 'pending' || item.status === 'uploading'
+    ).length;
     const { accepted, rejected } = selectPdfFiles(
       Array.from(incoming),
-      items.map(item => item.file)
+      items.map(item => item.file),
+      batchFileCount
     );
 
     if (rejected.length > 0) {
@@ -189,6 +197,7 @@ export default function PdfUpload() {
     const controller = new AbortController();
     abortRef.current = controller;
     setIsUploading(true);
+    setActiveBatchIds(targets.map(item => item.id));
     setSummary(null);
 
     try {
@@ -230,6 +239,7 @@ export default function PdfUpload() {
     } finally {
       abortRef.current = null;
       setIsUploading(false);
+      setActiveBatchIds([]);
       resetInput();
     }
   };
@@ -289,7 +299,7 @@ export default function PdfUpload() {
         <div className="mt-6">
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-lg font-medium">
-              Selected files ({items.length}/{MAX_BATCH_FILES})
+              Files ({counts.batch}/{MAX_BATCH_FILES} in current batch)
             </h3>
             <Button variant="ghost" size="sm" onClick={clearAll} disabled={isUploading}>
               Clear all
