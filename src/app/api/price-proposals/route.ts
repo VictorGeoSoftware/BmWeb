@@ -11,9 +11,7 @@ export async function GET(request: NextRequest) {
 
   try {
     const backendBaseUrl = process.env.BM_BACKEND_URL ?? DEFAULT_BACKEND_URL;
-    // Admin-only endpoint (`admin_users`). `/price-table-results` is the BmApp
-    // one and is gated on `granted_users`, which BmWeb admins may not be in.
-    const response = await fetch(`${backendBaseUrl}/api/v1/admin/price-table-results`, {
+    const response = await fetch(`${backendBaseUrl}/api/v1/price-table-results`, {
       cache: 'no-store',
       headers: { Authorization: authorization },
     });

@@ -15,9 +15,8 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/hooks/use-toast';
-import { CheckSquare, Search, SquareMinus, Trash2, X } from 'lucide-react';
+import { Search, Trash2, X } from 'lucide-react';
 import { authFetch } from '@/lib/api-client';
-import { isQA } from '@/lib/env';
 
 interface TarifaRow {
   tarifa: string;
@@ -485,23 +484,6 @@ export default function PriceProposalsPage() {
     );
   });
 
-  const visibleIds = filteredResults
-    .map(result => result.id)
-    .filter((id): id is number => typeof id === 'number');
-  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selectedIds.has(id));
-
-  const toggleSelectAllVisible = () => {
-    setSelectedIds(prev => {
-      const next = new Set(prev);
-      if (allVisibleSelected) {
-        visibleIds.forEach(id => next.delete(id));
-      } else {
-        visibleIds.forEach(id => next.add(id));
-      }
-      return next;
-    });
-  };
-
   return (
     <>
       <header className="mb-8">
@@ -587,32 +569,20 @@ export default function PriceProposalsPage() {
                     {savingTaxField === 'impuestoElectrico' ? 'Saving...' : 'Save'}
                   </Button>
                 </label>
-                <div className="ml-auto flex items-center gap-2">
-                  {isQA && visibleIds.length > 0 && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={toggleSelectAllVisible}
-                      disabled={isDeletingSelection}
-                    >
-                      {allVisibleSelected ? <SquareMinus /> : <CheckSquare />}
-                      {allVisibleSelected ? 'Deselect All' : `Select All (${visibleIds.length})`}
-                    </Button>
-                  )}
-                  {selectedIds.size > 0 && (
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      onClick={handleDeleteSelection}
-                      disabled={isDeletingSelection}
-                    >
-                      <Trash2 />
-                      {isDeletingSelection
-                        ? `Deleting ${selectedIds.size}...`
-                        : `Delete Selection (${selectedIds.size})`}
-                    </Button>
-                  )}
-                </div>
+                {selectedIds.size > 0 && (
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={handleDeleteSelection}
+                    disabled={isDeletingSelection}
+                    className="ml-auto"
+                  >
+                    <Trash2 />
+                    {isDeletingSelection
+                      ? `Deleting ${selectedIds.size}...`
+                      : `Delete Selection (${selectedIds.size})`}
+                  </Button>
+                )}
               </div>
               <div className="relative mb-6">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
