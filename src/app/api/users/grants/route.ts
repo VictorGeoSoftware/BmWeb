@@ -71,7 +71,10 @@ export async function POST(request: NextRequest) {
         'Content-Type': 'application/json',
         Authorization: authorization,
       },
-      body: JSON.stringify({ email: body?.email ?? null }),
+      body: JSON.stringify({
+        email: body?.email ?? null,
+        tier: body?.tier ?? 'BASIC',
+      }),
     });
 
     const responseText = await response.text();
