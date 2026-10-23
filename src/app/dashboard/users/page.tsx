@@ -16,6 +16,13 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -26,8 +33,11 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 
+type UserTier = 'BASIC' | 'PREMIUM';
+
 interface GrantedUserItem {
   email: string;
+  tier: UserTier;
   grantedAt: number;
   name: string | null;
   isOnline: boolean | null;
@@ -104,7 +114,9 @@ export default function UsersPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [newEmail, setNewEmail] = useState('');
+  const [newTier, setNewTier] = useState<UserTier>('BASIC');
   const [isAdding, setIsAdding] = useState(false);
+  const [updatingTierEmail, setUpdatingTierEmail] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<ActionMessage | null>(null);
   const [userPendingDeletion, setUserPendingDeletion] = useState<GrantedUserItem | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -124,7 +136,12 @@ export default function UsersPage() {
         throw new Error(payload?.message ?? 'Failed to load granted users');
       }
 
-      setUsers(payload.users ?? []);
+      setUsers(
+        (payload.users ?? []).map(user => ({
+          ...user,
+          tier: user.tier ?? 'BASIC',
+        }))
+      );
     } catch (fetchError) {
       setError(fetchError instanceof Error ? fetchError.message : 'Failed to load granted users');
     } finally {
@@ -158,7 +175,7 @@ export default function UsersPage() {
       const response = await fetch('/api/users/grants', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email, tier: newTier }),
       });
       const payload = (await response.json()) as GrantedUsersResponse;
 
@@ -167,7 +184,8 @@ export default function UsersPage() {
       }
 
       setNewEmail('');
-      setActionMessage({ type: 'success', text: `Acceso concedido a ${email}.` });
+      setNewTier('BASIC');
+      setActionMessage({ type: 'success', text: `Acceso ${newTier} concedido a ${email}.` });
       await loadUsers(false);
     } catch (addError) {
       setActionMessage({
@@ -176,6 +194,40 @@ export default function UsersPage() {
       });
     } finally {
       setIsAdding(false);
+    }
+  };
+
+  const updateTier = async (user: GrantedUserItem, tier: UserTier) => {
+    if (tier === user.tier || updatingTierEmail) return;
+    setUpdatingTierEmail(user.email);
+    setActionMessage(null);
+
+    try {
+      const headers = await buildAuthHeaders();
+      const response = await fetch(`/api/users/grants/${encodeURIComponent(user.email)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...headers },
+        body: JSON.stringify({ tier }),
+      });
+      const payload = (await response.json()) as GrantedUsersResponse;
+      if (!response.ok) {
+        throw new Error(payload?.message ?? 'No se pudo actualizar el tipo de usuario');
+      }
+
+      setUsers(current =>
+        current.map(item => (item.email === user.email ? { ...item, tier } : item))
+      );
+      setActionMessage({
+        type: 'success',
+        text: `${user.email} ahora tiene acceso ${tier}.`,
+      });
+    } catch (tierError) {
+      setActionMessage({
+        type: 'error',
+        text: tierError instanceof Error ? tierError.message : 'No se pudo actualizar el tipo de usuario',
+      });
+    } finally {
+      setUpdatingTierEmail(null);
     }
   };
 
@@ -253,6 +305,15 @@ export default function UsersPage() {
           className="w-72"
           disabled={isAdding}
         />
+        <Select value={newTier} onValueChange={value => setNewTier(value as UserTier)}>
+          <SelectTrigger className="w-36" disabled={isAdding}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="BASIC">Basic</SelectItem>
+            <SelectItem value="PREMIUM">Premium</SelectItem>
+          </SelectContent>
+        </Select>
         <Button onClick={() => void addUser()} disabled={isAdding || !newEmail.trim()}>
           <UserPlus />
           {isAdding ? 'Añadiendo…' : 'Añadir usuario'}
@@ -304,6 +365,7 @@ export default function UsersPage() {
               <TableRow>
                 <TableHead>Nombre</TableHead>
                 <TableHead>Email</TableHead>
+                <TableHead>Tipo</TableHead>
                 <TableHead>Estado</TableHead>
                 <TableHead className="text-right">Uso mensual</TableHead>
                 <TableHead>Fecha inicio</TableHead>
@@ -318,6 +380,21 @@ export default function UsersPage() {
                 <TableRow key={user.email}>
                   <TableCell className="font-medium">{user.name ?? '—'}</TableCell>
                   <TableCell>{user.email}</TableCell>
+                  <TableCell>
+                    <Select
+                      value={user.tier}
+                      onValueChange={value => void updateTier(user, value as UserTier)}
+                      disabled={updatingTierEmail !== null}
+                    >
+                      <SelectTrigger className="h-8 w-32">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="BASIC">Basic</SelectItem>
+                        <SelectItem value="PREMIUM">Premium</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </TableCell>
                   <TableCell>
                     {user.isOnline === null ? (
                       <Badge variant="outline">Sin actividad</Badge>
