@@ -11,15 +11,19 @@ import handler, { config } from '@/pages/api/teach-me/clarifications';
 import { forwardTeachUpload } from '@/lib/teach-workbook-proxy';
 import { clarificationBodyLimit, clarificationMediaType } from '@/lib/teach-clarification';
 import { supplierDraftBodyLimit, supplierDraftMediaType } from '@/lib/teach-supplier-draft';
+import { draftPreviewBodyLimit, draftPreviewMediaType, draftPreviewRevisionFields } from '@/lib/teach-draft-preview';
+import { pricePreviewFixture, previewDraftFixture, previewRevisionVector } from '@/lib/teach-draft-preview.testing';
+import { referenceFilenameHeader } from '@/lib/teach-reference';
 import { workbookFilenameHeader, workbookMediaType } from '@/lib/teach-workbook';
 
 const qa = vi.hoisted(() => ({ value: true }));
-vi.mock('@/lib/env', async (importOriginal) => process.env.BM_TEACH_CLARIFY_TEST_PORT || process.env.BM_TEACH_DRAFT_TEST_PORT
+vi.mock('@/lib/env', async (importOriginal) => process.env.BM_TEACH_CLARIFY_TEST_PORT || process.env.BM_TEACH_DRAFT_TEST_PORT || process.env.BM_TEACH_PREVIEW_TEST_PORT
   ? importOriginal() : { get isQA() { return qa.value; } });
 
 const pathname = '/api/teach-me/clarifications';
 const headers = { Authorization: 'Bearer fixture-token', 'Content-Type': clarificationMediaType };
 const draftHeaders = { ...headers, 'Content-Type': supplierDraftMediaType };
+const previewHeaders = { ...headers, 'Content-Type': draftPreviewMediaType };
 const question = { kind: 'question', workbookSha256: 'a'.repeat(64), candidates: [{ sheet: 'Tarifas', a1: 'B2' }, { sheet: 'Tarifas', a1: 'C2' }] };
 const fetchUpstream = vi.fn();
 const realFetch = globalThis.fetch;
@@ -36,6 +40,7 @@ beforeEach(() => {
   vi.stubEnv('BM_BACKEND_URL', 'http://qa.invalid');
   vi.stubEnv('NEXT_PUBLIC_TEACH_CLARIFY_LOCAL', 'true');
   vi.stubEnv('NEXT_PUBLIC_TEACH_DRAFT_LOCAL', undefined);
+  vi.stubEnv('NEXT_PUBLIC_TEACH_PREVIEW_LOCAL', undefined);
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
@@ -346,6 +351,161 @@ it.skipIf(!process.env.BM_TEACH_DRAFT_TEST_PORT)('chains supplier draft Pages pr
     expect(await send([1, 'revise', workbook.length, digest, 'demo-electricidad', first.draft.revisionId, 'La columna C'])).toEqual(second);
     expect(second.draft.revisionId).not.toBe(first.draft.revisionId);
     expect(await send([1, 'revise', workbook.length, digest, 'demo-electricidad', second.draft.revisionId, 'La columna B'], 403)).toBe('');
+  } finally {
+    server.close();
+    server.closeAllConnections();
+  }
+}, 25_000);
+
+it('guards preview flags, environment and singleton metadata before opening the request stream', async () => {
+  const raw = Object.entries(previewHeaders).flat();
+  for (const [status, flag, draft, clarify, isQA, rawHeaders, url = pathname] of [
+    [404, undefined, 'true', 'true', true, raw],
+    [404, 'true', undefined, 'true', true, raw],
+    [404, 'true', 'true', undefined, true, raw],
+    [404, 'true', 'true', 'true', false, raw],
+    [401, 'true', 'true', 'true', true, [...raw, 'authorization', 'Bearer another']],
+    [400, 'true', 'true', 'true', true, [...raw, 'content-type', draftPreviewMediaType]],
+    [400, 'true', 'true', 'true', true, [...raw, workbookFilenameHeader, 'eA']],
+    [400, 'true', 'true', 'true', true, [...raw, referenceFilenameHeader, 'eA']],
+    [400, 'true', 'true', 'true', true, raw, `${pathname}?extra=1`],
+    [415, 'true', 'true', 'true', true, [...raw, 'content-encoding', 'identity']],
+    [415, 'true', 'true', 'true', true, ['Authorization', headers.Authorization, 'Content-Type', `${draftPreviewMediaType}; charset=utf-8`]],
+  ] as const) {
+    vi.stubEnv('NEXT_PUBLIC_TEACH_PREVIEW_LOCAL', flag);
+    vi.stubEnv('NEXT_PUBLIC_TEACH_DRAFT_LOCAL', draft);
+    vi.stubEnv('NEXT_PUBLIC_TEACH_CLARIFY_LOCAL', clarify);
+    qa.value = isQA;
+    const req = Object.assign(new PassThrough(), { method: 'POST', url, rawHeaders });
+    const read = vi.spyOn(req, 'read');
+    const res = Object.assign(new PassThrough(), { statusCode: 0, headers: new Headers(),
+      setHeader(name: string, value: string) { this.headers.set(name, value); },
+      status(code: number) { this.statusCode = code; return this; } });
+    await handler(req as unknown as NextApiRequest, res as unknown as NextApiResponse);
+    expect(res.statusCode).toBe(status);
+    expect(res.headers.get('Cache-Control')).toBe('no-store');
+    expect(read).not.toHaveBeenCalled();
+    req.destroy(); res.destroy();
+  }
+  expect(fetchUpstream).not.toHaveBeenCalled();
+});
+
+function enablePreview() {
+  vi.stubEnv('NEXT_PUBLIC_TEACH_DRAFT_LOCAL', 'true');
+  vi.stubEnv('NEXT_PUBLIC_TEACH_PREVIEW_LOCAL', 'true');
+}
+
+it('enforces preview request and closed response schema and binds the UTF-8 revision vector', async () => {
+  enablePreview();
+  const draft = previewDraftFixture.draft;
+  expect(createHash('sha256').update(draftPreviewRevisionFields(draft)).digest('hex')).toBe(previewRevisionVector);
+  const requestHeaders = new Headers({ ...previewHeaders, 'Content-Type': draftPreviewMediaType.toUpperCase(), Cookie: 'ignored=yes' });
+  const range = new Uint8Array(draftPreviewBodyLimit);
+  const received: Uint8Array[] = [];
+  fetchUpstream.mockImplementationOnce(async (_, init) => {
+    expect(init).toMatchObject({ method: 'POST', redirect: 'error', duplex: 'half', cache: 'no-store', headers: previewHeaders });
+    await consume(init, (bytes) => received.push(bytes));
+    return Response.json(previewDraftFixture);
+  });
+  const max = await post({ requestHeaders, body: stream(range) });
+  expect(received[0]).toBe(range);
+  expect(await max.json()).toEqual(previewDraftFixture);
+  fetchUpstream.mockImplementationOnce(async (_, init) => { await consume(init); return Response.json(previewDraftFixture); });
+  expect((await post({ requestHeaders, body: stream(range, Uint8Array.of(1)) })).status).toBe(413);
+  const expected = pricePreviewFixture();
+  const bad = pricePreviewFixture();
+  bad.rows[1].prices[0].cell.a1 = 'AA17';
+  const badDecimal = pricePreviewFixture();
+  badDecimal.rows[1].prices[0].decimal = '0,5';
+  const badUnit = pricePreviewFixture();
+  badUnit.rows[1].prices[0].unit = '€/MWh';
+  for (const [response, status] of [
+    [Response.json(expected), 200],
+    [Response.json(draftResult('B2')), 502],
+    [Response.json({ kind: 'draft', draft: { ...draft, revisionId: '0'.repeat(64) } }), 502],
+    [Response.json({ kind: 'draft', draft: { ...draft, rule: { ...draft.rule, extra: true } } }), 502],
+    [Response.json({ ...expected, revisionId: '0'.repeat(64) }), 502],
+    [Response.json({ ...expected, rows: expected.rows.slice(1) }), 502],
+    [Response.json({ ...expected, rows: [...expected.rows].reverse() }), 502],
+    [Response.json(bad), 502], [Response.json(badDecimal), 502], [Response.json(badUnit), 502],
+    [new Response(' '.repeat(4096) + JSON.stringify(expected), { headers: { 'Content-Type': 'application/json' } }), 502],
+    [new Response('private failure', { status: 500 }), 502],
+    [new Response('private conflict', { status: 409 }), 409],
+  ] as const) {
+    fetchUpstream.mockImplementationOnce(async (_, init) => { await consume(init); return response; });
+    const res = await post({ requestHeaders });
+    expect(res.status).toBe(status);
+    expect(res.headers.get('Cache-Control')).toBe('no-store');
+    if (status === 200) expect(await res.json()).toEqual(expected);
+    else expect(await res.text()).toBe('');
+  }
+});
+
+it('shares the same four slots and deadline with both prior clarification modes', async () => {
+  enablePreview();
+  vi.useFakeTimers();
+  const controller = new AbortController();
+  fetchUpstream.mockImplementation(async (_, init: RequestInit) => {
+    await consume(init);
+    return new Promise((_, reject) => {
+      if (init.signal?.aborted) reject(new Error('aborted'));
+      else init.signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+    });
+  });
+  const call = (selected: typeof headers, signal?: AbortSignal) => post({ signal, requestHeaders: new Headers(selected) });
+  const held = [headers, draftHeaders, previewHeaders, previewHeaders].map((h) => call(h, controller.signal));
+  expect((await call(previewHeaders)).status).toBe(429);
+  expect((await call(draftHeaders)).status).toBe(429);
+  controller.abort();
+  expect((await Promise.all(held)).map((item) => item.status)).toEqual([408, 408, 408, 408]);
+  const last = call(previewHeaders);
+  await vi.advanceTimersByTimeAsync(15_000);
+  expect((await last).status).toBe(502);
+});
+
+it.skipIf(!process.env.BM_TEACH_PREVIEW_TEST_PORT)('chains draft preview Pages proxy and Ktor over loopback', async () => {
+  const port = Number(process.env.BM_TEACH_PREVIEW_TEST_PORT);
+  const offPort = Number(process.env.BM_TEACH_PREVIEW_OFF_TEST_PORT);
+  if ([port, offPort].some((n) => !Number.isInteger(n) || n < 1 || n > 65535)) throw new Error('Invalid loopback test port');
+  enablePreview();
+  vi.stubEnv('BM_BACKEND_URL', `http://127.0.0.1:${port}`);
+  vi.stubGlobal('fetch', realFetch);
+  const server = createServer((req, res) => {
+    const response = Object.assign(res, { status(code: number) { res.statusCode = code; return this; } });
+    void handler(req as NextApiRequest, response as unknown as NextApiResponse).catch(() => res.destroy());
+  });
+  server.listen(0, '127.0.0.1');
+  try {
+    await once(server, 'listening');
+    const proxy = `http://127.0.0.1:${(server.address() as AddressInfo).port}${pathname}`;
+    const workbook = Buffer.from(process.env.BM_TEACH_PREVIEW_TEST_WORKBOOK!, 'base64');
+    const alternate = Buffer.from(process.env.BM_TEACH_PREVIEW_TEST_ALTERNATE!, 'base64');
+    const { draft } = previewDraftFixture;
+    expect(createHash('sha256').update(workbook).digest('hex')).toBe(draft.workbookSha256);
+    const send = async (operation: 'prepare' | 'preview', status: number, bytes = workbook, revision: string = draft.revisionId) => {
+      const tuple = [1, operation, bytes.length, draft.profileKey, ...(operation === 'preview' ? [draft.supplierKey, draft.workbookSha256, revision] : [])];
+      const manifest = Buffer.from(JSON.stringify(tuple));
+      const prefix = Buffer.alloc(4);
+      prefix.writeUInt32BE(manifest.length);
+      const body = stream(prefix, manifest, bytes);
+      const response = await realFetch(proxy, { method: 'POST', body, duplex: 'half', headers: previewHeaders } as RequestInit);
+      expect(response.status).toBe(status);
+      expect(response.headers.get('Cache-Control')).toBe('no-store');
+      const text = await response.text();
+      expect(Buffer.byteLength(text)).toBeLessThan(4096);
+      if (operation === 'preview' && status === 200) console.info(`Complete loopback preview: ${Buffer.byteLength(text)} UTF-8 bytes`);
+      return status === 200 ? JSON.parse(text) : text;
+    };
+    expect(await send('prepare', 200)).toEqual(previewDraftFixture);
+    expect(await send('preview', 200)).toEqual(pricePreviewFixture());
+    expect(await send('preview', 409, workbook, '0'.repeat(64))).toBe('');
+    expect(await send('preview', 409, alternate)).toBe('');
+    expect(await send('preview', 403)).toBe('');
+    vi.stubEnv('NEXT_PUBLIC_TEACH_PREVIEW_LOCAL', undefined);
+    expect(await send('prepare', 404)).toBe('');
+    enablePreview();
+    vi.stubEnv('BM_BACKEND_URL', `http://127.0.0.1:${offPort}`);
+    expect(await send('prepare', 404)).toBe('');
   } finally {
     server.close();
     server.closeAllConnections();

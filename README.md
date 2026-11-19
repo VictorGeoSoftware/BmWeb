@@ -72,3 +72,31 @@ historial, permisos ni localizadores. No se toca la carga PDF ni el catálogo.
 Se verifica con los mismos comandos web de arriba. El README de BmBackend
 documenta el gate adicional Pages → Netty con el XLSX sintético; no usa
 Firebase real, no arranca un stack QA y no verifica el layout en navegador.
+
+## Enséñame: previsualizar precios (V2)
+
+**Solo QA local aislado, apagado por defecto.** Requiere `NEXT_PUBLIC_APP_ENV=qa`,
+`NEXT_PUBLIC_TEACH_CLARIFY_LOCAL=true`, `NEXT_PUBLIC_TEACH_DRAFT_LOCAL=true` y
+`NEXT_PUBLIC_TEACH_PREVIEW_LOCAL=true`, además de los opt-ins independientes de
+BmBackend. No poner los opt-ins de preview en QA alojado ni en producción.
+Elige explícitamente Gesternova 2.0TD (sintético) y prepara un borrador V2 con
+`gesternova-20td-sanitized.xlsx` de `BmBackend/src/test/resources/ensename/`.
+Al pulsar «Previsualizar precios», reselecciona la misma muestra sin volverla a
+guardar. El panel conserva la revisión y el resultado en memoria de la vista;
+no activa nada ni guarda propuestas, no transforma V1 y no admite el original
+comercial u otros libros. Los resultados son literales con citas (no son un
+payload de importación). Cambiar la selección, cerrar, recargar, cambiar de
+cuenta o conocer una denegación invalida el resultado.
+
+Pages retransmite el frame por `/api/teach-me/clarifications` con el tipo
+singleton `application/vnd.bm.teach-draft-preview`, sin nombres ni referencias.
+El prefijo BE de cuatro bytes delimita `[1,"prepare",xlsxBytes,profileKey]` o
+`[1,"preview",xlsxBytes,profileKey,supplierKey,workbookSha256,revisionId]`, luego
+solo el XLSX. El manifiesto admite 1–32 KiB y el XLSX 1 byte–5 MiB. Comparte los
+cuatro puestos y 15 s del proxy; el éxito cerrado de 4 KiB valida variante,
+regla, citas y huella V2 antes de que la UI compruebe el turno y la revisión.
+BmBackend es la única autoridad en cada POST; no hay llamadas a BmPriceAgent.
+Véase el README de BmBackend para el contrato canónico del ID y el gate joint.
+
+Verificación con Node 20: `./init.sh` (sin `--dev`) y
+`npm test -- src/app/api/teach-me src/components/teach-clarification-composer.test.tsx src/components/teach-me-access.test.tsx src/components/teach-draft-preview.test.tsx`.

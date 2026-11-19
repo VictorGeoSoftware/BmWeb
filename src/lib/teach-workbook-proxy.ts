@@ -4,6 +4,7 @@ import { clarificationBodyLimit, clarificationMediaType, clarificationResponseLi
 import { referenceBodyLimit, referenceFilenameHeader, referenceFormats, referenceKindForMediaType, validReferenceFilename } from '@/lib/teach-reference';
 import { readTeachReceipt, validTeachFilename, validWorkbookFilename, workbookBodyLimit, workbookFilenameHeader, workbookMediaType } from '@/lib/teach-workbook';
 import { isTeachSupplierDraftEnabled, readSupplierDraftResult, supplierDraftBodyLimit, supplierDraftMediaType, supplierDraftRevisionFields } from '@/lib/teach-supplier-draft';
+import { draftPreviewBodyLimit, draftPreviewMediaType, draftPreviewRevisionFields, isTeachDraftPreviewEnabled, readTeachDraftPreviewResult } from '@/lib/teach-draft-preview';
 
 const headers = { 'Cache-Control': 'no-store' };
 type UploadPath = 'messages' | 'references' | 'clarifications';
@@ -54,12 +55,14 @@ export async function forwardTeachUpload(request: UploadRequest, path: UploadPat
   const types = request.values('content-type');
   const [type] = types;
   const draftWire = clarification && types.length === 1 && type.toLowerCase() === supplierDraftMediaType;
-  const bodyLimit = draftWire ? supplierDraftBodyLimit : clarification ? clarificationBodyLimit : reference ? referenceBodyLimit : workbookBodyLimit;
+  const previewWire = clarification && types.length === 1 && type.toLowerCase() === draftPreviewMediaType;
+  const bodyLimit = previewWire ? draftPreviewBodyLimit : draftWire ? supplierDraftBodyLimit : clarification ? clarificationBodyLimit : reference ? referenceBodyLimit : workbookBodyLimit;
   function error(status: number) {
-    const code = status === 415 ? (draftWire ? 'unsupported_workbook' : clarification ? 'unsupported_clarification' : reference ? 'unsupported_reference' : 'unsupported_workbook') : errors[status];
+    const code = status === 415 ? (draftWire || previewWire ? 'unsupported_workbook' : clarification ? 'unsupported_clarification' : reference ? 'unsupported_reference' : 'unsupported_workbook') : errors[status];
     return code ? Response.json({ error: code }, { status, headers }) : new Response(null, { status, headers });
   }
-  if (!isQA || (clarification && !isTeachClarificationEnabled()) || (draftWire && !isTeachSupplierDraftEnabled())) return error(404);
+  if (!isQA || (clarification && !isTeachClarificationEnabled()) || (draftWire && !isTeachSupplierDraftEnabled()) ||
+      (previewWire && !isTeachDraftPreviewEnabled())) return error(404);
   const authorizations = request.values('authorization');
   const [authorization] = authorizations;
   if (!authorization?.startsWith('Bearer ') || !authorization.slice(7).trim() ||
@@ -69,11 +72,11 @@ export async function forwardTeachUpload(request: UploadRequest, path: UploadPat
   const [wire] = names;
   const filename = filenameFromHeader(wire ?? null);
   if (request.url.includes('?') || types.length > 1 || type?.includes(',') ||
-      (draftWire && (request.values(workbookFilenameHeader).length > 0 || request.values(referenceFilenameHeader).length > 0)) ||
+      ((draftWire || previewWire) && (request.values(workbookFilenameHeader).length > 0 || request.values(referenceFilenameHeader).length > 0)) ||
       (!clarification && (names.length !== 1 || !filename))) return error(400);
   const kind = reference ? referenceKindForMediaType(type) : 'workbook';
   if (!kind) return error(415);
-  const mediaType = draftWire ? supplierDraftMediaType : clarification ? clarificationMediaType : kind === 'workbook' ? workbookMediaType : referenceFormats[kind].mediaType;
+  const mediaType = previewWire ? draftPreviewMediaType : draftWire ? supplierDraftMediaType : clarification ? clarificationMediaType : kind === 'workbook' ? workbookMediaType : referenceFormats[kind].mediaType;
   if (!clarification && filename && (kind === 'workbook' ? !validWorkbookFilename(filename) : !validReferenceFilename(filename, kind))) return error(400);
   if (type?.toLowerCase() !== mediaType || request.values('content-encoding').length) return error(415);
   const backend = process.env.BM_BACKEND_URL;
@@ -137,6 +140,13 @@ export async function forwardTeachUpload(request: UploadRequest, path: UploadPat
       return error(502);
     }
     const payload = await boundedJson(response, clarification);
+    if (previewWire) {
+      const result = readTeachDraftPreviewResult(payload);
+      if (!result) return error(502);
+      const selection = result.kind === 'draft' ? result.draft : result;
+      if (createHash('sha256').update(draftPreviewRevisionFields(selection), 'utf8').digest('hex') !== selection.revisionId) return error(502);
+      return failure ? error(failure) : Response.json(result, { headers });
+    }
     if (clarification) {
       const result = draftWire ? readSupplierDraftResult(payload) : readClarificationResult(payload);
       if (result?.kind === 'draft' && createHash('sha256').update(supplierDraftRevisionFields(result.draft), 'utf8').digest('hex') !== result.draft.revisionId) return error(502);
