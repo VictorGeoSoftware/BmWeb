@@ -1,12 +1,20 @@
 'use client';
 
+import { useEffect, useRef, useState } from 'react';
+import { onAuthStateChanged, User } from 'firebase/auth';
+import { TeachWorkbookComposer } from '@/components/teach-workbook-composer';
 import { useTeachMeAccess } from '@/hooks/use-teach-me-access';
+import { auth } from '@/lib/firebase/client';
+import { isQA } from '@/lib/env';
 
-export default function TeachMePage() {
+const unavailable = <p role="status">Esta sección no está disponible para tu cuenta en este entorno.</p>;
+
+function TeachMeSession({ isCurrent }: { isCurrent: () => boolean }) {
   const access = useTeachMeAccess();
+  const [denied, setDenied] = useState(false);
 
+  if (denied || access === 'denied' || !isCurrent()) return unavailable;
   if (access === 'checking') return <p role="status">Comprobando acceso…</p>;
-  if (access === 'denied') return <p role="status">Esta sección no está disponible para tu cuenta en este entorno.</p>;
   if (access === 'error') return <p role="alert">No se pudo comprobar el acceso. Vuelve a intentarlo.</p>;
 
   return (
@@ -16,6 +24,22 @@ export default function TeachMePage() {
         <span className="rounded-md bg-muted px-2 py-1 text-xs font-medium text-muted-foreground">QA</span>
       </div>
       <p className="mt-2 text-muted-foreground">Espacio para enseñar a BmWeb a leer propuestas de precios eléctricos en Excel.</p>
+      <TeachWorkbookComposer isCurrent={isCurrent} onDenied={() => setDenied(true)} />
     </section>
   );
+}
+
+export default function TeachMePage() {
+  const [session, setSession] = useState(() => ({ user: auth.currentUser, version: 0 }));
+  const current = useRef<{ user: User | null; version: number }>(session);
+  useEffect(() => {
+    if (!isQA) return;
+    return onAuthStateChanged(auth, (user) => {
+      if (current.current.user === user) return;
+      current.current = { user, version: current.current.version + 1 };
+      setSession(current.current);
+    });
+  }, []);
+  if (!isQA || !session.user) return unavailable;
+  return <TeachMeSession key={session.version} isCurrent={() => current.current === session && auth.currentUser === session.user} />;
 }

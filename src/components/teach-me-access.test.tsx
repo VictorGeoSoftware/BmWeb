@@ -5,10 +5,12 @@ import { AppSidebar } from '@/components/app-sidebar';
 import { SidebarProvider } from '@/components/ui/sidebar';
 import { authFetch } from '@/lib/api-client';
 
-const state = vi.hoisted(() => ({ isQA: true, path: '/dashboard' }));
+const state = vi.hoisted(() => ({ isQA: true, path: '/dashboard' as string | null }));
 vi.mock('@/lib/env', () => ({ get isQA() { return state.isQA; } }));
 vi.mock('next/navigation', () => ({ usePathname: () => state.path }));
 vi.mock('@/lib/api-client', () => ({ authFetch: vi.fn() }));
+vi.mock('@/lib/firebase/client', () => ({ auth: { currentUser: { uid: 'synthetic-user' } } }));
+vi.mock('firebase/auth', () => ({ onAuthStateChanged: () => () => {} }));
 
 const fetchAccess = vi.mocked(authFetch);
 const sidebar = () => <SidebarProvider><AppSidebar /></SidebarProvider>;
@@ -31,6 +33,23 @@ it('shows the sidebar link only after a grant and removes it on a denied navigat
   fetchAccess.mockResolvedValueOnce(new Response(null, { status: 403 }));
   state.path = '/dashboard/price-proposals';
   view.rerender(sidebar());
+  await waitFor(() => expect(fetchAccess).toHaveBeenCalledTimes(2));
+  expect(screen.queryByRole('link', { name: 'Enséñame' })).not.toBeInTheDocument();
+});
+
+it('marks no navigation active before the pathname is available and rechecks access when it resolves', async () => {
+  state.path = null;
+  fetchAccess.mockResolvedValueOnce(new Response(null, { status: 204 }));
+  const view = render(sidebar());
+  await screen.findByRole('link', { name: 'Enséñame' });
+  for (const name of ['Upload Prices', 'Price Proposals', 'Enséñame', 'Usuarios', 'Collected Prices']) {
+    expect(screen.getByRole('link', { name })).toHaveAttribute('data-active', 'false');
+  }
+
+  fetchAccess.mockResolvedValueOnce(new Response(null, { status: 403 }));
+  state.path = '/dashboard/users/synthetic';
+  view.rerender(sidebar());
+  expect(screen.getByRole('link', { name: 'Usuarios' })).toHaveAttribute('data-active', 'true');
   await waitFor(() => expect(fetchAccess).toHaveBeenCalledTimes(2));
   expect(screen.queryByRole('link', { name: 'Enséñame' })).not.toBeInTheDocument();
 });

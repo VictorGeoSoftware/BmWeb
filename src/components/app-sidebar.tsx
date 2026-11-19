@@ -20,7 +20,8 @@ import { authFetch } from '@/lib/api-client';
 import { useTeachMeAccess } from '@/hooks/use-teach-me-access';
 
 export function AppSidebar() {
-  const pathname = usePathname();
+  // The mixed App/Pages router can report no pathname before the router is ready.
+  const pathname = usePathname() ?? '';
   const teachMeAccess = useTeachMeAccess(pathname);
   const { toast } = useToast();
   const [isFetchingTotalPrices, setIsFetchingTotalPrices] = useState(false);
