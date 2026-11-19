@@ -4,11 +4,13 @@ import { useEffect, useRef, useState } from 'react';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { TeachWorkbookComposer } from '@/components/teach-workbook-composer';
 import { TeachClarificationComposer } from '@/components/teach-clarification-composer';
+import { TeachSupplierDraftComposer } from '@/components/teach-supplier-draft-composer';
 import { Button } from '@/components/ui/button';
 import { useTeachMeAccess } from '@/hooks/use-teach-me-access';
 import { auth } from '@/lib/firebase/client';
 import { isQA } from '@/lib/env';
 import { isTeachClarificationEnabled } from '@/lib/teach-clarification';
+import { isTeachSupplierDraftEnabled } from '@/lib/teach-supplier-draft';
 
 const unavailable = <p role="status">Esta sección no está disponible para tu cuenta en este entorno.</p>;
 
@@ -16,7 +18,8 @@ function TeachMeSession({ isCurrent }: { isCurrent: () => boolean }) {
   const access = useTeachMeAccess();
   const [denied, setDenied] = useState(false);
   const [pilotUnavailable, setPilotUnavailable] = useState(false);
-  const [pilotOpen, setPilotOpen] = useState(false);
+  const [draftUnavailable, setDraftUnavailable] = useState(false);
+  const [mode, setMode] = useState<'clarification' | 'draft' | null>(null);
 
   if (denied || access === 'denied' || !isCurrent()) return unavailable;
   if (access === 'checking') return <p role="status">Comprobando acceso…</p>;
@@ -31,10 +34,20 @@ function TeachMeSession({ isCurrent }: { isCurrent: () => boolean }) {
       <p className="mt-2 text-muted-foreground">Espacio para enseñar a BmWeb a leer propuestas de precios eléctricos en Excel.</p>
       <TeachWorkbookComposer isCurrent={isCurrent} onDenied={() => setDenied(true)} />
       {isTeachClarificationEnabled() && !pilotUnavailable && <div className="mt-6 min-w-0 max-w-2xl space-y-3">
-        <Button type="button" variant="outline" aria-expanded={pilotOpen} className="h-auto whitespace-normal text-left"
-          onClick={() => setPilotOpen(!pilotOpen)}>Probar aclaración (solo ejemplos sintéticos)</Button>
-        {pilotOpen && <TeachClarificationComposer isCurrent={isCurrent} onUnavailable={(status) => {
+        <Button type="button" variant="outline" aria-expanded={mode === 'clarification'} className="h-auto max-w-full whitespace-normal text-left"
+          onClick={() => setMode(mode === 'clarification' ? null : 'clarification')}>Probar aclaración (solo ejemplos sintéticos)</Button>
+        {mode === 'clarification' && <TeachClarificationComposer isCurrent={isCurrent} onUnavailable={(status) => {
+          setMode(null);
           setPilotUnavailable(true);
+          if (status !== 404) setDenied(true);
+        }} />}
+      </div>}
+      {isTeachSupplierDraftEnabled() && !draftUnavailable && <div className="mt-6 min-w-0 max-w-2xl space-y-3">
+        <Button type="button" variant="outline" aria-expanded={mode === 'draft'} className="h-auto max-w-full whitespace-normal text-left"
+          onClick={() => setMode(mode === 'draft' ? null : 'draft')}>Probar borrador de Skill (solo muestra sintética)</Button>
+        {mode === 'draft' && <TeachSupplierDraftComposer isCurrent={isCurrent} onUnavailable={(status) => {
+          setMode(null);
+          setDraftUnavailable(true);
           if (status !== 404) setDenied(true);
         }} />}
       </div>}

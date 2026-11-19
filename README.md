@@ -43,3 +43,32 @@ Los tests del compositor verifican los dos frames y su representación, no el
 layout real. El test de integración contra Ktor se activa desde BmBackend; usa
 dos puertos efímeros de loopback y autorización controlada, no un stack QA ni
 Firebase real. Véase «Clarify workbook rules» en el README de BmBackend.
+
+## Enséñame: probar un borrador de Skill
+
+Piloto apagado por defecto y **solo para QA local aislado**. Además de los flags
+de entorno y aclaración de arriba, requiere `NEXT_PUBLIC_TEACH_DRAFT_LOCAL=true`
+en BmWeb y `BM_TEACH_DRAFT_LOCAL=true` en BmBackend. No habilitar en QA alojado
+ni producción. La aclaración normal conserva su pregunta, su acuse y su
+transporte opcional de PDF/PNG.
+
+En «Probar borrador de Skill», elige `ensename-demo.xlsx` desde el checkout de
+BmBackend (`src/test/resources/ensename/ensename-demo.xlsx`), sin volverlo a
+guardar. Reselecciona esos mismos bytes en cada turno. Tras ver las dos citas,
+elige explícitamente Comercializadora Demo y escribe «La columna B» o «La
+columna C». Puedes hacer una corrección para comparar las dos revisiones de
+una única regla de columna. «Borrador sin activar» no implica ni una prueba de
+extracción ni una validación. Cancelar, cerrar, recargar, salir, cambiar de
+cuenta o conocer una denegación borra la vista; no hay historial.
+
+El mismo endpoint Pages usa `application/vnd.bm.teach-supplier-draft` para
+seleccionar el wire, el límite de `5 MiB + 32 KiB + 4 bytes` y el esquema de
+respuesta. No reenvía nombres ni adjuntos de referencia. Habilitar la vista no
+otorga acceso: el backend reautoriza antes de leer cada uno de los tres POST.
+El proxy valida el JSON cerrado (máx. 4 KiB) y la huella de contenido; la vista
+comprueba el turno, la identidad, el digest y la cita elegida. Los IDs no son
+historial, permisos ni localizadores. No se toca la carga PDF ni el catálogo.
+
+Se verifica con los mismos comandos web de arriba. El README de BmBackend
+documenta el gate adicional Pages → Netty con el XLSX sintético; no usa
+Firebase real, no arranca un stack QA y no verifica el layout en navegador.

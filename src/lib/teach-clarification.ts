@@ -11,13 +11,13 @@ type Citation = { sheet: string; a1: string };
 export type ClarificationQuestion = { kind: 'question'; workbookSha256: string; candidates: [Citation, Citation] };
 type ClarificationResult = ClarificationQuestion | { kind: 'not_applicable' } | { kind: 'acknowledged' };
 
-function exact(value: unknown, ...keys: string[]): value is Record<string, unknown> {
+export function exactTeachObject(value: unknown, ...keys: string[]): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value) &&
     Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
 }
 
 function citation(value: unknown): value is Citation {
-  if (!exact(value, 'sheet', 'a1') || typeof value.sheet !== 'string' || typeof value.a1 !== 'string') return false;
+  if (!exactTeachObject(value, 'sheet', 'a1') || typeof value.sheet !== 'string' || typeof value.a1 !== 'string') return false;
   if (!value.sheet || /^\p{White_Space}+$/u.test(value.sheet) || [...value.sheet].length > 31 ||
       encoder.encode(value.sheet).length > 124 || /[:\\/?*\[\]\p{Cc}\p{Cs}\p{Bidi_Control}\uFEFF]/u.test(value.sheet)) return false;
   const match = /^([A-Z]{1,3})([1-9][0-9]{0,6})$/.exec(value.a1);
@@ -27,8 +27,8 @@ function citation(value: unknown): value is Citation {
 }
 
 export function readClarificationResult(value: unknown): ClarificationResult | null {
-  if (exact(value, 'kind') && (value.kind === 'not_applicable' || value.kind === 'acknowledged')) return { kind: value.kind };
-  if (!exact(value, 'kind', 'workbookSha256', 'candidates') || value.kind !== 'question' ||
+  if (exactTeachObject(value, 'kind') && (value.kind === 'not_applicable' || value.kind === 'acknowledged')) return { kind: value.kind };
+  if (!exactTeachObject(value, 'kind', 'workbookSha256', 'candidates') || value.kind !== 'question' ||
       typeof value.workbookSha256 !== 'string' || value.workbookSha256.length !== 64 || !digest.test(value.workbookSha256) ||
       !Array.isArray(value.candidates) || value.candidates.length !== 2) return null;
   const [a, b] = value.candidates;
@@ -42,13 +42,15 @@ export function validClarificationAnswer(answer: string) {
 }
 
 export function clarificationFrame(workbook: File, reply?: { digest: string; answer: string; pdf?: File; png?: File }) {
-  const manifest = encoder.encode(JSON.stringify(reply
+  const tuple = reply
     ? [1, 'reply', workbook.size, reply.pdf?.size ?? 0, reply.png?.size ?? 0, reply.digest, reply.answer]
-    : [1, 'ask', workbook.size]));
+    : [1, 'ask', workbook.size];
+  return teachFrame(clarificationMediaType, tuple, [workbook, ...(reply?.pdf ? [reply.pdf] : []), ...(reply?.png ? [reply.png] : [])]);
+}
+
+export function teachFrame(mediaType: string, tuple: (string | number)[], parts: File[]) {
+  const manifest = encoder.encode(JSON.stringify(tuple));
   const prefix = new Uint8Array(4);
   new DataView(prefix.buffer).setUint32(0, manifest.length);
-  const parts: BlobPart[] = [prefix, manifest, workbook];
-  if (reply?.pdf) parts.push(reply.pdf);
-  if (reply?.png) parts.push(reply.png);
-  return new Blob(parts, { type: clarificationMediaType });
+  return new Blob([prefix, manifest, ...parts], { type: mediaType });
 }

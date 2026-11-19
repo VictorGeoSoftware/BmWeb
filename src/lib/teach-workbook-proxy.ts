@@ -1,7 +1,9 @@
+import { createHash } from 'node:crypto';
 import { isQA } from '@/lib/env';
 import { clarificationBodyLimit, clarificationMediaType, clarificationResponseLimit, isTeachClarificationEnabled, readClarificationResult } from '@/lib/teach-clarification';
 import { referenceBodyLimit, referenceFilenameHeader, referenceFormats, referenceKindForMediaType, validReferenceFilename } from '@/lib/teach-reference';
 import { readTeachReceipt, validTeachFilename, validWorkbookFilename, workbookBodyLimit, workbookFilenameHeader, workbookMediaType } from '@/lib/teach-workbook';
+import { isTeachSupplierDraftEnabled, readSupplierDraftResult, supplierDraftBodyLimit, supplierDraftMediaType, supplierDraftRevisionFields } from '@/lib/teach-supplier-draft';
 
 const headers = { 'Cache-Control': 'no-store' };
 type UploadPath = 'messages' | 'references' | 'clarifications';
@@ -49,27 +51,29 @@ export async function forwardTeachUpload(request: UploadRequest, path: UploadPat
   const reference = path === 'references';
   const clarification = path === 'clarifications';
   const filenameHeader = reference ? referenceFilenameHeader : workbookFilenameHeader;
-  const bodyLimit = clarification ? clarificationBodyLimit : reference ? referenceBodyLimit : workbookBodyLimit;
+  const types = request.values('content-type');
+  const [type] = types;
+  const draftWire = clarification && types.length === 1 && type.toLowerCase() === supplierDraftMediaType;
+  const bodyLimit = draftWire ? supplierDraftBodyLimit : clarification ? clarificationBodyLimit : reference ? referenceBodyLimit : workbookBodyLimit;
   function error(status: number) {
-    const code = status === 415 ? (clarification ? 'unsupported_clarification' : reference ? 'unsupported_reference' : 'unsupported_workbook') : errors[status];
+    const code = status === 415 ? (draftWire ? 'unsupported_workbook' : clarification ? 'unsupported_clarification' : reference ? 'unsupported_reference' : 'unsupported_workbook') : errors[status];
     return code ? Response.json({ error: code }, { status, headers }) : new Response(null, { status, headers });
   }
-  if (!isQA || (clarification && !isTeachClarificationEnabled())) return error(404);
+  if (!isQA || (clarification && !isTeachClarificationEnabled()) || (draftWire && !isTeachSupplierDraftEnabled())) return error(404);
   const authorizations = request.values('authorization');
   const [authorization] = authorizations;
   if (!authorization?.startsWith('Bearer ') || !authorization.slice(7).trim() ||
       (clarification && (authorizations.length !== 1 || authorization.includes(',')))) return error(401);
   if (active >= 4) return error(429);
-  const types = request.values('content-type');
-  const [type] = types;
   const names = clarification ? [] : request.values(filenameHeader);
   const [wire] = names;
   const filename = filenameFromHeader(wire ?? null);
   if (request.url.includes('?') || types.length > 1 || type?.includes(',') ||
+      (draftWire && (request.values(workbookFilenameHeader).length > 0 || request.values(referenceFilenameHeader).length > 0)) ||
       (!clarification && (names.length !== 1 || !filename))) return error(400);
   const kind = reference ? referenceKindForMediaType(type) : 'workbook';
   if (!kind) return error(415);
-  const mediaType = clarification ? clarificationMediaType : kind === 'workbook' ? workbookMediaType : referenceFormats[kind].mediaType;
+  const mediaType = draftWire ? supplierDraftMediaType : clarification ? clarificationMediaType : kind === 'workbook' ? workbookMediaType : referenceFormats[kind].mediaType;
   if (!clarification && filename && (kind === 'workbook' ? !validWorkbookFilename(filename) : !validReferenceFilename(filename, kind))) return error(400);
   if (type?.toLowerCase() !== mediaType || request.values('content-encoding').length) return error(415);
   const backend = process.env.BM_BACKEND_URL;
@@ -134,7 +138,8 @@ export async function forwardTeachUpload(request: UploadRequest, path: UploadPat
     }
     const payload = await boundedJson(response, clarification);
     if (clarification) {
-      const result = readClarificationResult(payload);
+      const result = draftWire ? readSupplierDraftResult(payload) : readClarificationResult(payload);
+      if (result?.kind === 'draft' && createHash('sha256').update(supplierDraftRevisionFields(result.draft), 'utf8').digest('hex') !== result.draft.revisionId) return error(502);
       return result && !failure ? Response.json(result, { headers }) : error(failure ?? 502);
     }
     const attachment = filename && readTeachReceipt(payload, kind, filename, received);
