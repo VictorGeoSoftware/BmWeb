@@ -192,3 +192,33 @@ importación anterior, añadiendo `src/components/teach-proposal-validation.test
 `src/components/teach-me-access.test.tsx` y `src/components/teach-skill-activation.test.tsx`.
 El README de BmBackend describe el joint obligatorio con Netty y PostgreSQL 16
 desechable. No se usa un stack QA ni servicios de BM; no es browser E2E.
+
+## Enséñame: solicitud de promoción simulada (harness sintético)
+
+Apagada por defecto. Añade `NEXT_PUBLIC_TEACH_PROMOTION_PILOT=true` para la
+vista y `BM_TEACH_PROMOTION_PILOT=true` para Pages, además de los opt-ins QA de
+importación y validación. No configurar en `.env`, servicios ni hosting. La
+autoridad es el fixture Netty de BmBackend, no los flags.
+
+En `?view=excel`, la tarjeta que tiene evidencia de validación consulta su
+estado exacto. «Solicitar promoción a producción» exige una confirmación
+separada, con destino simulado y sin publicación. Cancelar no envía POST. Si
+falla la consulta no se habilita una primera solicitud; si la respuesta se
+pierde, vuelve a consultar y recupera deliberadamente el mismo objetivo si
+queda pendiente. No hay reintento automático ni estado persistido en el
+navegador. Solo un estado abierto autorizado muestra el identificador de PR:
+texto copiable de `pr-pilot.invalid`, nunca un enlace navegable.
+
+`GET /api/teach-me/production-promotion` usa solo el bearer y el header
+singleton `X-Teach-Promotion-Ref` canónico, sin cuerpo ni query. El POST usa
+`{"validationRef":"<uuid>","confirmPromotion":true}` con longitud fija de hasta
+1 KiB y sin `bodyParser`. El upstream debe ser un `127.0.0.1` efímero; el POST
+espera la señal HTTP provisional específica del fixture, posterior a la
+autorización, antes de leer el cuerpo. No se sigue una redirección. Ambos
+comparten los límites de admisión con Enséñame y validan respuestas cerradas de
+hasta 2 KiB sin caché. Los contratos de importación y validación no cambian.
+
+Node 20: `./init.sh` (sin `--dev`) y el foco de validación anterior, añadiendo
+`src/components/teach-production-promotion.test.tsx`. El README de BmBackend
+documenta el joint Pages → Netty → PG16 desechable → fake en memoria. No es
+browser E2E ni prueba de un PR real, hosting, merge o despliegue.

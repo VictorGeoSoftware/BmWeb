@@ -1,13 +1,16 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { forwardTeachUpload, forwardTeachProposalImport } from '@/lib/teach-workbook-proxy';
+import { forwardTeachUpload, forwardTeachProposalImport, promotionProxyEnabled } from '@/lib/teach-workbook-proxy';
+import { promotionRefHeader } from '@/lib/teach-production-promotion';
 
 // App Router receives Node's normalized headers (duplicate Content-Type can be lost).
 // This Pages API boundary exposes rawHeaders and leaves IncomingMessage unparsed.
 export async function handleTeachUpload(req: NextApiRequest, res: NextApiResponse,
-  path: 'messages' | 'references' | 'clarifications' | 'activation' | 'proposal-import' | 'proposal-imports' | 'proposal-validation', fixturePins?: ReadonlySet<string>) {
-  const method = path === 'proposal-imports' ? 'GET' : 'POST';
-  if (req.method !== method) {
-    res.setHeader('Allow', method);
+  path: 'messages' | 'references' | 'clarifications' | 'activation' | 'proposal-import' | 'proposal-imports' | 'proposal-validation' | 'production-promotion', fixturePins?: ReadonlySet<string>) {
+  const promote = path === 'production-promotion';
+  const methods = promote ? ['GET', 'POST'] : [path === 'proposal-imports' ? 'GET' : 'POST'];
+  if (promote && !promotionProxyEnabled()) { res.setHeader('Cache-Control', 'no-store'); res.status(404).end(); return; }
+  if (!methods.includes(req.method ?? '')) {
+    res.setHeader('Allow', methods.join(', '));
     res.setHeader('Cache-Control', 'no-store');
     res.status(405).end();
     return;
@@ -32,8 +35,10 @@ export async function handleTeachUpload(req: NextApiRequest, res: NextApiRespons
       names: () => req.rawHeaders.filter((_, i) => i % 2 === 0),
       body: () => requestBytes(req),
     };
-    const response = await (path === 'proposal-import' || path === 'proposal-imports' || path === 'proposal-validation'
-      ? forwardTeachProposalImport(request, path) : forwardTeachUpload(request, path, fixturePins));
+    const response = await (!promote && request.values(promotionRefHeader).length
+      ? new Response(null, { status: 400, headers: { 'Cache-Control': 'no-store' } })
+      : path === 'proposal-import' || path === 'proposal-imports' || path === 'proposal-validation' || path === 'production-promotion'
+      ? forwardTeachProposalImport(request, path, req.method === 'GET') : forwardTeachUpload(request, path, fixturePins));
     if (res.destroyed) return;
     // On early rejection, do not consume the rest of the upload for keep-alive.
     if (!req.readableEnded) res.setHeader('Connection', 'close');

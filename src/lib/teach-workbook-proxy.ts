@@ -7,7 +7,9 @@ import { isTeachSupplierDraftEnabled, readSupplierDraftResult, supplierDraftBody
 import { draftPreviewBodyLimit, draftPreviewMediaType, draftPreviewRevisionFields, isTeachDraftPreviewEnabled, previewProfile, profileWorkbookDigest, readTeachDraftPreviewResult } from '@/lib/teach-draft-preview';
 import { activationBodyLimit, qaPilotPreviewMediaType, parseActivationRequest, readActivationResult, readPilotPreview } from '@/lib/teach-skill-activation';
 import { importAttemptHeader, importConflicts, importListResponseLimit, importsQuery, readImportPage, readImportReceipt, readValidationResult,
-  validationBodyLimit, validationResponseLimit, validImportAttempt, validImportId } from '@/lib/teach-proposal-import';
+  validationBodyLimit, validationResponseLimit, validImportAttempt, validImportId, validValidationRef } from '@/lib/teach-proposal-import';
+import { promotionRefHeader, promotionResponseLimit, readPromotionResult } from '@/lib/teach-production-promotion';
+import { forwardPromotionConfirmation } from '@/lib/teach-promotion-transport';
 import { exactTeachObject } from '@/lib/teach-clarification';
 
 const headers = { 'Cache-Control': 'no-store' };
@@ -52,11 +54,21 @@ const validationOverrides = new Set(['workbookfilename', 'importattempt', 'valid
   'originalurl', 'rewriteurl', 'trailer', 'contenttransferencoding']);
 const jsonType = /^application\/json(?:\s*;\s*charset=(?:utf-8|"utf-8"))?$/i;
 
-export async function forwardTeachProposalImport(request: UploadRequest & { names: () => string[] }, path: 'proposal-import' | 'proposal-imports' | 'proposal-validation') {
-  const list = path === 'proposal-imports';
+const incidentalPromotionHeaders = new Set(['host', 'connection', 'accept', 'accept-language', 'accept-encoding', 'user-agent',
+  'authorization', 'pragma', 'cache-control', 'cookie', 'referer', 'origin', 'sec-fetch-dest', 'sec-fetch-mode',
+  'sec-fetch-site', 'sec-ch-ua', 'sec-ch-ua-mobile', 'sec-ch-ua-platform', 'priority', 'dnt', 'sec-gpc']);
+export const promotionProxyEnabled = () => isQA && process.env.BM_TEACH_IMPORT_PILOT === 'true' &&
+  process.env.BM_TEACH_VALIDATION_PILOT === 'true' && process.env.BM_TEACH_PROMOTION_PILOT === 'true';
+
+export async function forwardTeachProposalImport(request: UploadRequest & { names: () => string[] },
+    path: 'proposal-import' | 'proposal-imports' | 'proposal-validation' | 'production-promotion', get = false) {
+  const promote = path === 'production-promotion';
+  const list = path === 'proposal-imports' || (promote && get);
   const validate = path === 'proposal-validation';
+  const fixed = validate || promote;
   const plain = (status: number) => new Response(null, { status, headers });
   if (!isQA || process.env.BM_TEACH_IMPORT_PILOT !== 'true') return plain(404);
+  if (promote && !promotionProxyEnabled()) return plain(404);
   const query = request.url.includes('?') ? request.url.slice(request.url.indexOf('?') + 1) : null;
   const enriched = list && !!query?.startsWith('validation=');
   if ((validate || enriched) && process.env.BM_TEACH_VALIDATION_PILOT !== 'true') return plain(404);
@@ -67,6 +79,13 @@ export async function forwardTeachProposalImport(request: UploadRequest & { name
   const lengths = request.values('content-length');
   const names = request.values(workbookFilenameHeader);
   const attempts = request.values(importAttemptHeader);
+  const refs = request.values(promotionRefHeader);
+  if (promote) {
+    if (query !== null || encodings.length) return plain(400);
+    if (request.values('content-encoding').length) return plain(415);
+    const allowed = new Set([...incidentalPromotionHeaders, 'content-length', ...(list ? [promotionRefHeader.toLowerCase()] : ['content-type'])]);
+    if (request.names().some(name => !allowed.has(name.toLowerCase())) || (list && (refs.length !== 1 || !validValidationRef(refs[0])))) return plain(400);
+  }
   if (request.values('content-disposition').length || request.values(referenceFilenameHeader).length || request.names().some(name => {
     const key = name.toLowerCase().replace(/_/g, '-').replace(/^x-/, '').replace(/^bm-/, '').replace(/^teach-/, '').replace(/-/g, '');
     return importOverrides.has(key) || ((enriched || validate) && validationOverrides.has(key));
@@ -83,7 +102,7 @@ export async function forwardTeachProposalImport(request: UploadRequest & { name
     }
     if (contentTypes.length || encodings.length || names.length || attempts.length || request.values('content-encoding').length ||
         (lengths.length !== 0 && (lengths.length !== 1 || lengths[0] !== '0'))) return plain(400);
-  } else if (validate) {
+  } else if (fixed) {
     if (query !== null || encodings.length || lengths.length !== 1 || !validImportId(lengths[0]) ||
         contentTypes.length > 1 || contentTypes[0]?.includes(',') || names.length || attempts.length) return plain(400);
     if (Number(lengths[0]) > validationBodyLimit) return plain(413);
@@ -104,6 +123,12 @@ export async function forwardTeachProposalImport(request: UploadRequest & { name
   const match = target && /^http:\/\/127\.0\.0\.1:([1-9][0-9]{0,4})\/?$/.exec(target);
   if (!match || match[0] !== target || Number(match[1]) > 65535) return plain(502);
   if (active >= 4) return plain(429);
+  if (promote && !list) {
+    active++;
+    try { return await forwardPromotionConfirmation(Number(match[1]), authorization, lengths[0], request.signal, request.body); }
+    catch { return plain(502); }
+    finally { active--; }
+  }
   const reader = list ? null : request.body()?.getReader();
   if (!list && !reader) return plain(400);
 
@@ -127,9 +152,9 @@ export async function forwardTeachProposalImport(request: UploadRequest & { name
           if (!size || (lengths.length && size !== Number(lengths[0]))) { stop(400); controller.error(new Error('Invalid size')); return; }
           complete = true;
           controller.close();
-        } else if (part.value.byteLength > (validate ? validationBodyLimit : workbookBodyLimit) - size) {
+        } else if (part.value.byteLength > (fixed ? validationBodyLimit : workbookBodyLimit) - size) {
           stop(413); controller.error(new Error('Upload limit'));
-        } else if (validate && part.value.byteLength > Number(lengths[0]) - size) {
+        } else if (fixed && part.value.byteLength > Number(lengths[0]) - size) {
           stop(400); controller.error(new Error('Invalid size'));
         } else {
           size += part.value.byteLength;
@@ -143,14 +168,14 @@ export async function forwardTeachProposalImport(request: UploadRequest & { name
   try {
     const init: RequestInit & { duplex?: 'half' } = {
       method: list ? 'GET' : 'POST', signal: upstream.signal, cache: 'no-store', redirect: 'error',
-      headers: { Authorization: authorization, ...(list ? {} : validate ? { 'Content-Type': 'application/json', 'Content-Length': lengths[0] }
+      headers: { Authorization: authorization, ...(list ? (promote ? { [promotionRefHeader]: refs[0] } : {}) : fixed ? { 'Content-Type': 'application/json', 'Content-Length': lengths[0] }
         : { 'Content-Type': workbookMediaType, [workbookFilenameHeader]: names[0], [importAttemptHeader]: attempts[0] }) },
       ...(list ? {} : { body, duplex: 'half' }),
     };
-    const response = await fetch(`http://127.0.0.1:${match[1]}/api/v1/teach-me/${path}${list ? importsQuery(cursor, enriched) : ''}`, init);
+    const response = await fetch(`http://127.0.0.1:${match[1]}/api/v1/teach-me/${path}${list && !promote ? importsQuery(cursor, enriched) : ''}`, init);
     if (failure) return plain(failure);
     const success = response.status === 200 || (!list && response.status === 201);
-    const conflict = !list && !validate && response.status === 409;
+    const conflict = !list && !fixed && response.status === 409;
     if (!success && !conflict) {
       void response.body?.cancel().catch(() => {});
       return plain([400, 401, 403, 404, 405, 408, 413, 415, 429, 500, 503].includes(response.status) ? response.status : 502);
@@ -159,10 +184,11 @@ export async function forwardTeachProposalImport(request: UploadRequest & { name
       void response.body?.cancel().catch(() => {});
       return plain(502);
     }
-    const limit = list ? importListResponseLimit : validate ? validationResponseLimit : 4 * 1024;
+    const limit = promote ? promotionResponseLimit : list ? importListResponseLimit : validate ? validationResponseLimit : 4 * 1024;
     const value = await boundedJson(response, true, limit);
     if (failure) return plain(failure);
     const result = conflict ? (exactTeachObject(value, 'error') && importConflicts.some(it => it === value.error) ? { error: value.error } : null)
+      : promote ? readPromotionResult(value, response.status, !list)
       : list ? readImportPage(value, cursor, enriched) : validate ? readValidationResult(value, response.status) : readImportReceipt(value, response.status);
     if (!result) return plain(502);
     const json = JSON.stringify(result);

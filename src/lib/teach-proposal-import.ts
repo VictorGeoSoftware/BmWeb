@@ -30,13 +30,13 @@ export function readImportReceipt(value: unknown, status: number) {
   return { kind, importId: value.importId, revisionId: value.revisionId, generation: value.generation, proposalCount: 3 };
 }
 
-function validImportInstant(value: unknown): value is string {
+export function validImportInstant(value: unknown): value is string {
   if (typeof value !== 'string' || /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{3}(?:[0-9]{3})?)?Z$/.exec(value)?.[0] !== value) return false;
   const date = new Date(value);
   return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 19) === value.slice(0, 19);
 }
 
-const validValidationRef = (value: unknown): value is string => typeof value === 'string' && value.length === 36 &&
+export const validValidationRef = (value: unknown): value is string => typeof value === 'string' && value.length === 36 &&
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value);
 
 export function readValidationResult(value: unknown, status: number) {

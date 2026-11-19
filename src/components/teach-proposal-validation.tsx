@@ -9,6 +9,8 @@ import { authFetch } from '@/lib/api-client';
 import { importListResponseLimit, importsPath, importsQuery, readBoundedTeachJson, readImportPage,
   readValidationResult, validImportId, validationPath, validationResponseLimit, type ValidatableImportBatch } from '@/lib/teach-proposal-import';
 import { useTeachImportRequest } from '@/lib/use-teach-import-request';
+import { isTeachPromotionEnabled } from '@/lib/teach-production-promotion';
+import { TeachProductionPromotion } from '@/components/teach-production-promotion';
 
 const unknown = 'No se pudo confirmar el resultado. Vuelve a consultar esta importación';
 
@@ -116,6 +118,8 @@ export function TeachProposalValidation({ user, canAccess, revoke, batch, fresh 
           </AlertDialogContent>
         </AlertDialog>
       </>}
+      {evidence && isTeachPromotionEnabled() && <TeachProductionPromotion key={evidence.validatedAt}
+        user={user} canAccess={canAccess} revoke={revoke} batch={batch} validatedAt={evidence.validatedAt} fresh={fresh} />}
     </div>
   );
 }
