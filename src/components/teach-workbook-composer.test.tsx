@@ -3,6 +3,7 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import TeachMePage from '@/app/dashboard/teach-me/page';
 import { authFetch } from '@/lib/api-client';
 import { workbookFilenameHeader, workbookMediaType } from '@/lib/teach-workbook';
+import { referenceBodyLimit, referenceFilenameHeader } from '@/lib/teach-reference';
 
 const firebase = vi.hoisted(() => ({
   auth: { currentUser: null as { uid: string } | null },
@@ -53,7 +54,7 @@ it('allows removal, sends only the raw File and shows separate local text only a
   fireEvent.click(send());
   fireEvent.click(send());
   expect(entries()).toHaveLength(0);
-  expect(screen.getByRole('status')).toHaveTextContent('Enviando Excel');
+  expect(screen.getByRole('status')).toHaveTextContent(`Enviando… Excel · ${fixture.name}`);
   const requests = fetchAuth.mock.calls.filter(([path]) => path.endsWith('/messages'));
   expect(requests).toHaveLength(1);
   const [path, init] = requests[0];
@@ -130,4 +131,193 @@ it('aborts on account change and ignores a late successful receipt even if the r
   expect(await screen.findByLabelText(/Comentario/)).toHaveValue('');
   expect(entries()).toHaveLength(0);
   expect(fetchAuth.mock.calls.filter(([path]) => path.endsWith('check-access'))).toHaveLength(2);
+});
+
+const pdf = new File(['ordinary synthetic PDF bytes (transport mocked)'], 'Apoyo.PDF', { type: 'application/octet-stream' });
+const png = new File(['ordinary synthetic PNG bytes (transport mocked)'], 'Detalle.png');
+const pdfSelector = () => screen.getByLabelText('Referencia PDF (opcional)');
+const pngSelector = () => screen.getByLabelText('Referencia PNG (opcional)');
+const uploadCalls = () => fetchAuth.mock.calls.filter(([path]) => !path.endsWith('check-access'));
+const referenceReceipt = (file: File, kind: 'reference_pdf' | 'reference_png') =>
+  Response.json({ attachment: { kind, filename: file.name, sizeBytes: file.size } });
+const receiptFor = (file: File) => file === pdf ? referenceReceipt(pdf, 'reference_pdf') :
+  file === png ? referenceReceipt(png, 'reference_png') : receipt();
+const selectPdf = (...files: File[]) => fireEvent.change(pdfSelector(), { target: { files } });
+const selectPng = (...files: File[]) => fireEvent.change(pngSelector(), { target: { files } });
+
+it.each([{ files: [pdf] }, { files: [png] }, { files: [pdf, png] }])('groups the selected references and Excel into one confirmed entry', async ({ files }) => {
+  fetchAuth.mockImplementation(async (path, init) => path.endsWith('check-access') ? new Response(null, { status: 204 }) : receiptFor(init?.body as File));
+  render(<TeachMePage />);
+  await screen.findByLabelText('Adjuntar Excel (.xlsx)');
+  expect(pdfSelector()).toHaveAttribute('accept', '.pdf');
+  expect(pngSelector()).toHaveAttribute('accept', '.png');
+  // Select in the reverse order so selection order cannot accidentally define the POST order.
+  if (files.includes(png)) selectPng(png);
+  if (files.includes(pdf)) selectPdf(pdf);
+  expect(send()).toBeDisabled();
+  fireEvent.submit(comment().closest('form')!);
+  expect(uploadCalls()).toHaveLength(0);
+  attach('Local, never sent');
+  fireEvent.click(send());
+  expect(await screen.findByRole('listitem')).toHaveTextContent(`Excel · ${fixture.name}`);
+  expect(entries()).toHaveLength(1);
+  expect(entries()[0]).toHaveTextContent('Local, never sent');
+  const expectedOrder = [...files, fixture];
+  const calls = uploadCalls();
+  expect(calls.map(([, init]) => init?.body)).toEqual(expectedOrder);
+  for (const [index, [path, init]] of calls.entries()) {
+    const file = expectedOrder[index];
+    const workbook = file === fixture;
+    const label = file === pdf ? 'Referencia PDF' : 'Referencia PNG';
+    if (!workbook) expect(entries()[0]).toHaveTextContent(`${label} · ${file.name}`);
+    expect(path).toBe(workbook ? '/api/teach-me/messages' : '/api/teach-me/references');
+    expect(init).toMatchObject({ method: 'POST', cache: 'no-store', redirect: 'error', headers: {
+      'Content-Type': workbook ? workbookMediaType : file === pdf ? 'application/pdf' : 'image/png',
+      [workbook ? workbookFilenameHeader : referenceFilenameHeader]: Buffer.from(file.name).toString('base64url'),
+    } });
+    expect(init?.signal).toBe(calls[0][1]?.signal);
+    expect(JSON.stringify([path, init?.headers])).not.toContain('Local, never sent');
+  }
+  expect(send()).toBeDisabled();
+  expect(comment()).toHaveValue('');
+  expect(screen.queryByText(/^Seleccionado:/)).not.toBeInTheDocument();
+});
+
+it('blocks unsupported, empty, oversized and multiple selections without dropping the other slots', async () => {
+  render(<TeachMePage />);
+  await screen.findByLabelText('Adjuntar Excel (.xlsx)');
+  attach('draft kept');
+  selectPng(png);
+  const unsupported = new File(['ordinary notes'], 'notes.txt');
+  const empty = new File([], 'empty.pdf');
+  const big = new File([new Uint8Array(referenceBodyLimit + 1)], 'large.pdf');
+  const badName = new File(['ordinary notes'], 'bad\u202e.pdf');
+  for (const selection of [[unsupported], [empty], [big], [badName], [pdf, unsupported]]) {
+    selectPdf(...selection);
+    expect(pdfSelector()).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByRole('alert')).toHaveTextContent('Referencia PDF:');
+    expect(send()).toBeDisabled();
+    fireEvent.submit(comment().closest('form')!);
+    expect(uploadCalls()).toHaveLength(0);
+    expect(screen.getByText(`Seleccionado: ${fixture.name}`)).toBeVisible();
+    expect(screen.getByText(`Seleccionado: ${png.name}`)).toBeVisible();
+    expect(comment()).toHaveValue('draft kept');
+  }
+  fireEvent.click(screen.getByRole('button', { name: 'Quitar Referencia PDF' }));
+  expect(pdfSelector()).toHaveAttribute('aria-invalid', 'false');
+  expect(send()).toBeEnabled();
+  selectPdf(pdf);
+  expect(screen.getByText(`Seleccionado: ${pdf.name}`)).toBeVisible();
+  fireEvent.change(selector(), { target: { files: [pdf] } });
+  expect(send()).toBeDisabled();
+  expect(screen.getByRole('alert')).toHaveTextContent('Excel:');
+});
+
+it.each([
+  [0, 'Referencia PDF', () => new Response(null, { status: 408 })],
+  [1, 'Referencia PNG', () => new Response(null, { status: 415 })],
+  [2, 'Excel', () => Response.json({ attachment: { kind: 'workbook', filename: fixture.name } })],
+] as const)('stops at a failure on POST %i and revalidates all selected files on retry', async (step, label, failure) => {
+  let index = 0;
+  const invalidPng = new File(['plain synthetic text, not an image'], 'incorrect.png');
+  fetchAuth.mockImplementation(async (path, init) => {
+    if (path.endsWith('check-access')) return new Response(null, { status: 204 });
+    return index++ === step ? failure() : receiptFor(init?.body as File);
+  });
+  render(<TeachMePage />);
+  await screen.findByLabelText('Adjuntar Excel (.xlsx)');
+  attach('Retry this draft');
+  selectPdf(pdf);
+  selectPng(step === 1 ? invalidPng : png);
+  fireEvent.click(send());
+  const firstFiles = [pdf, step === 1 ? invalidPng : png, fixture];
+  expect(await screen.findByRole('alert')).toHaveTextContent(`${label}:`);
+  expect(uploadCalls().map(([, init]) => init?.body)).toEqual(firstFiles.slice(0, step + 1));
+  expect(entries()).toHaveLength(0);
+  expect(comment()).toHaveValue('Retry this draft');
+  for (const file of firstFiles) expect(screen.getByText(`Seleccionado: ${file.name}`)).toBeVisible();
+  if (step === 1) selectPng(png);
+  fireEvent.click(send());
+  expect(await screen.findByRole('listitem')).toHaveTextContent('Retry this draft');
+  expect(uploadCalls().map(([, init]) => init?.body)).toEqual([...firstFiles.slice(0, step + 1), pdf, png, fixture]);
+  expect(entries()).toHaveLength(1);
+});
+
+it('does not continue after a mismatched reference receipt or denials between requests', async () => {
+  const responses = [receipt(), referenceReceipt(pdf, 'reference_png'), referenceReceipt(pdf, 'reference_pdf'),
+    new Response(null, { status: 403 })];
+  fetchAuth.mockImplementation(async (path) => path.endsWith('check-access') ? new Response(null, { status: 204 }) : responses.shift()!);
+  render(<TeachMePage />);
+  await screen.findByLabelText('Adjuntar Excel (.xlsx)');
+  attach('old entry');
+  fireEvent.click(send());
+  await screen.findByRole('listitem');
+  attach('will be cleared');
+  selectPdf(pdf);
+  selectPng(png);
+  fireEvent.click(send());
+  expect(await screen.findByRole('alert')).toHaveTextContent('Referencia PDF: No se pudo confirmar');
+  expect(entries()).toHaveLength(1);
+  expect(uploadCalls()).toHaveLength(2);
+  fireEvent.click(send());
+  expect(await screen.findByText(/no está disponible/)).toBeVisible();
+  expect(uploadCalls().map(([, init]) => init?.body)).toEqual([fixture, pdf, pdf, png]);
+  expect(uploadCalls()[3][1]?.signal?.aborted).toBe(true);
+  expect(entries()).toHaveLength(0);
+  expect(screen.queryByLabelText(/Comentario/)).not.toBeInTheDocument();
+});
+
+it('blocks a duplicate click while reading the first receipt and abandons it on account change', async () => {
+  let finish: (value: unknown) => void = () => {};
+  const pending = new Promise((resolve) => { finish = resolve; });
+  const json = vi.fn(() => pending);
+  const response = new Response(null, { status: 200 });
+  response.json = json;
+  fetchAuth.mockImplementation(async (path) => path.endsWith('check-access') ? new Response(null, { status: 204 }) : response);
+  render(<TeachMePage />);
+  await screen.findByLabelText('Adjuntar Excel (.xlsx)');
+  attach('old account');
+  selectPdf(pdf);
+  selectPng(png);
+  fireEvent.click(send());
+  fireEvent.submit(comment().closest('form')!);
+  await waitFor(() => expect(json).toHaveBeenCalledOnce());
+  expect(screen.getByRole('status')).toHaveTextContent(`Enviando… Referencia PDF · ${pdf.name}`);
+  expect(send()).toBeDisabled();
+  expect(pdfSelector()).toBeDisabled();
+  expect(pngSelector()).toBeDisabled();
+  expect(comment()).toBeDisabled();
+  expect(uploadCalls()).toHaveLength(1);
+  const signal = uploadCalls()[0][1]?.signal;
+  swapUser({ uid: 'synthetic-b' });
+  await screen.findByLabelText('Referencia PDF (opcional)');
+  expect(signal?.aborted).toBe(true);
+  await act(async () => { finish({ attachment: { kind: 'reference_pdf', filename: pdf.name, sizeBytes: pdf.size } }); });
+  expect(uploadCalls()).toHaveLength(1);
+  expect(send()).toBeDisabled();
+  expect(comment()).toHaveValue('');
+  expect(entries()).toHaveLength(0);
+});
+
+it('clears and aborts even if the same document is restored after leaving', async () => {
+  let finish: (value: Response) => void = () => {};
+  const pending = new Promise<Response>((resolve) => { finish = resolve; });
+  fetchAuth.mockImplementation(async (path) => path.endsWith('check-access') ? new Response(null, { status: 204 }) :
+    uploadCalls().length === 1 ? receipt() : pending);
+  render(<TeachMePage />);
+  await screen.findByLabelText('Adjuntar Excel (.xlsx)');
+  attach('confirmed entry');
+  fireEvent.click(send());
+  await screen.findByRole('listitem');
+  attach('uncommitted draft');
+  selectPdf(pdf);
+  fireEvent.click(send());
+  const signal = uploadCalls()[1][1]?.signal;
+  act(() => { window.dispatchEvent(new Event('pagehide')); });
+  expect(signal?.aborted).toBe(true);
+  await act(async () => { finish(referenceReceipt(pdf, 'reference_pdf')); });
+  expect(uploadCalls()).toHaveLength(2);
+  expect(entries()).toHaveLength(0);
+  expect(comment()).toHaveValue('');
+  expect(send()).toBeDisabled();
 });

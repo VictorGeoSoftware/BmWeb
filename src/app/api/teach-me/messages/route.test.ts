@@ -3,8 +3,10 @@
 import { NextRequest } from 'next/server';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { workbookBodyLimit, workbookFilenameHeader, workbookMediaType } from '@/lib/teach-workbook';
-import { forwardTeachWorkbook } from '@/lib/teach-workbook-proxy';
+import { forwardTeachUpload } from '@/lib/teach-workbook-proxy';
 import rawHandler, { config as rawConfig } from '@/pages/api/teach-me/messages';
+import referenceHandler, { config as referenceConfig } from '@/pages/api/teach-me/references';
+import { referenceBodyLimit, referenceFilenameHeader } from '@/lib/teach-reference';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { PassThrough } from 'node:stream';
 import { EventEmitter } from 'node:events';
@@ -18,18 +20,18 @@ const url = 'http://local.test/api/teach-me/messages';
 const uploadHeaders = { Authorization: 'Bearer test', 'Content-Type': workbookMediaType, [workbookFilenameHeader]: wire };
 
 function POST(request: NextRequest) {
-  return forwardTeachWorkbook({ url: request.url, signal: request.signal, body: () => request.body,
-    values: (key) => { const value = request.headers.get(key); return value === null ? [] : [value]; } });
+  return forwardTeachUpload({ url: request.url, signal: request.signal, body: () => request.body,
+    values: (key) => { const value = request.headers.get(key); return value === null ? [] : [value]; } }, 'messages');
 }
 
-async function rawRequest(rawHeaders: string[], stream = new PassThrough()) {
-  const request = Object.assign(stream, { method: 'POST', url, rawHeaders });
+async function rawRequest(rawHeaders: string[], stream = new PassThrough(), handler = rawHandler, address = url) {
+  const request = Object.assign(stream, { method: 'POST', url: address, rawHeaders });
   const output = Object.assign(new EventEmitter(), { headers: new Headers(), statusCode: 0, payload: undefined as string | undefined,
     setHeader(name: string, value: string) { this.headers.set(name, value); },
     status(code: number) { this.statusCode = code; return this; },
     end(value?: string) { this.payload = value; },
   });
-  await rawHandler(request as unknown as NextApiRequest, output as unknown as NextApiResponse);
+  await handler(request as unknown as NextApiRequest, output as unknown as NextApiResponse);
   return output;
 }
 
@@ -218,4 +220,135 @@ it('returns 502 for an upstream timeout, bounds concurrency and frees slots afte
   const last = POST(req());
   await vi.advanceTimersByTimeAsync(15_000);
   expect((await last).status).toBe(502);
+});
+
+const referenceUrl = 'http://local.test/api/teach-me/references';
+const pdfName = 'Apoyo español.PDF';
+const pdfWire = Buffer.from(pdfName).toString('base64url');
+const pdfHeaders = { Authorization: 'Bearer test', 'Content-Type': 'application/pdf', [referenceFilenameHeader]: pdfWire };
+
+function referencePost({ headers = pdfHeaders, body = chunks(3), signal, address = referenceUrl }: {
+  headers?: HeadersInit; body?: ReadableStream<Uint8Array>; signal?: AbortSignal; address?: string;
+} = {}) {
+  const values = new Headers(headers);
+  return forwardTeachUpload({ url: address, signal: signal ?? new AbortController().signal, body: () => body,
+    values: (key) => { const value = values.get(key); return value === null ? [] : [value]; } }, 'references');
+}
+
+it('guards the raw reference boundary, rejects separate singleton lines and does not read or forward them', async () => {
+  expect(referenceConfig.api.bodyParser).toBe(false);
+  const raw = Object.entries(pdfHeaders).flat();
+  const run = async (headers: string[], status: number) => {
+    const stream = new PassThrough();
+    const read = vi.spyOn(stream, 'read');
+    const output = await rawRequest(headers, stream, referenceHandler, referenceUrl);
+    expect(output.statusCode).toBe(status);
+    expect(output.headers.get('cache-control')).toBe('no-store');
+    expect(output.headers.get('connection')).toBe('close');
+    expect(read).not.toHaveBeenCalled();
+    stream.destroy();
+  };
+  config.isQA = false;
+  await run(raw, 404);
+  config.isQA = true;
+  await run(raw.slice(2), 401);
+  await run([...raw, 'content-type', 'application/pdf'], 400);
+  await run([...raw, referenceFilenameHeader.toUpperCase(), pdfWire], 400);
+  expect(fetchUpstream).not.toHaveBeenCalled();
+});
+
+it('rejects invalid reference metadata without forwarding and sanitizes upstream structure errors', async () => {
+  for (const [headers, status] of [
+    [{ Authorization: 'Bearer test', 'Content-Type': 'application/pdf', [workbookFilenameHeader]: pdfWire }, 400],
+    [{ ...pdfHeaders, [referenceFilenameHeader]: pdfWire + '=' }, 400],
+    [{ ...pdfHeaders, [referenceFilenameHeader]: Buffer.from('archivo.png').toString('base64url') }, 400],
+    [{ ...pdfHeaders, [referenceFilenameHeader]: '_w' }, 400],
+    [{ ...pdfHeaders, [referenceFilenameHeader]: Buffer.from('a/b.pdf').toString('base64url') }, 400],
+    [{ ...pdfHeaders, 'Content-Type': 'application/pdf, application/pdf' }, 400],
+    [{ ...pdfHeaders, 'Content-Type': 'application/pdf; charset=utf-8' }, 415],
+    [{ ...pdfHeaders, 'Content-Type': workbookMediaType }, 415],
+    [{ Authorization: 'Bearer test', [referenceFilenameHeader]: pdfWire }, 415],
+    [{ ...pdfHeaders, 'Content-Encoding': 'identity' }, 415],
+  ] as [HeadersInit, number][]) {
+    const response = await referencePost({ headers });
+    expect(response.status).toBe(status);
+    expect(await response.json()).toEqual({ error: status === 400 ? 'invalid_message' : 'unsupported_reference' });
+  }
+  expect((await referencePost({ address: referenceUrl + '?' })).status).toBe(400);
+  expect(fetchUpstream).not.toHaveBeenCalled();
+  fetchUpstream.mockResolvedValue(new Response('private upstream text', { status: 415 }));
+  expect(await (await referencePost()).json()).toEqual({ error: 'unsupported_reference' });
+  fetchUpstream.mockResolvedValue(new Response(null, { status: 302, headers: { Location: 'http://elsewhere.test' } }));
+  expect((await referencePost()).status).toBe(502);
+});
+
+it('streams references unchanged to the fixed QA target with the inclusive actual byte limit', async () => {
+  const sent = vi.fn((bytes: Uint8Array) => expect(bytes.every((byte) => byte === 17)).toBe(true));
+  fetchUpstream.mockImplementation(async (target, init) => {
+    expect(target).toBe('http://qa.test/api/v1/teach-me/references');
+    expect(init).toMatchObject({ method: 'POST', redirect: 'error', duplex: 'half', cache: 'no-store' });
+    expect(init.headers).toEqual(pdfHeaders);
+    const sizeBytes = await consume(init, sent);
+    return Response.json({ attachment: { kind: 'reference_pdf', filename: pdfName, sizeBytes } });
+  });
+  const exact = await referencePost({ body: chunks(referenceBodyLimit - 1, 1), headers: {
+    ...pdfHeaders, 'Content-Type': 'APPLICATION/PDF', 'Content-Length': '1', Cookie: 'unrelated=yes', 'X-Other': 'ignored',
+  } });
+  expect(exact.status).toBe(200);
+  expect(await exact.json()).toEqual({ attachment: { kind: 'reference_pdf', filename: pdfName, sizeBytes: referenceBodyLimit } });
+  expect(sent).toHaveBeenCalledTimes(2);
+  const cancel = vi.fn();
+  let pulls = 0;
+  const excess = await referencePost({ body: new ReadableStream<Uint8Array>({
+    pull(controller) { controller.enqueue(new Uint8Array(++pulls === 1 ? referenceBodyLimit : 1).fill(17)); }, cancel,
+  }, { highWaterMark: 0 }) });
+  expect(excess.status).toBe(413);
+  expect(await excess.json()).toEqual({ error: 'upload_too_large' });
+  expect(pulls).toBe(2);
+  expect(cancel).toHaveBeenCalledTimes(1);
+  expect(sent).toHaveBeenCalledTimes(3);
+  expect((await referencePost({ body: chunks() })).status).toBe(400);
+});
+
+it('requires a bounded reference receipt matching exactly the kind, name and actual bytes', async () => {
+  const filename = 'apoyo.png';
+  const headers = { Authorization: 'Bearer test', 'Content-Type': 'image/png', [referenceFilenameHeader]: Buffer.from(filename).toString('base64url') };
+  const valid = { attachment: { kind: 'reference_png', filename, sizeBytes: 3 } };
+  for (const value of [valid, {}, { attachment: { ...valid.attachment, kind: 'reference_pdf' } },
+    { attachment: { ...valid.attachment, filename: 'other.png' } }, { attachment: { ...valid.attachment, sizeBytes: 2 } },
+    { attachment: { ...valid.attachment, payload: 'not part of receipt' } }]) {
+    fetchUpstream.mockImplementation(async (_, init) => { await consume(init); return Response.json(value); });
+    expect((await referencePost({ headers })).status).toBe(value === valid ? 200 : 502);
+  }
+  const json = JSON.stringify(valid);
+  for (const length of [4096, 4097]) {
+    fetchUpstream.mockImplementation(async (_, init) => {
+      await consume(init);
+      return new Response(json.padEnd(length, ' '), { headers: { 'Content-Type': 'application/json' } });
+    });
+    expect((await referencePost({ headers })).status).toBe(length === 4096 ? 200 : 502);
+  }
+});
+
+it('shares exactly four proxy slots across both upload routes, and retains per-request timeout semantics', async () => {
+  vi.useFakeTimers();
+  fetchUpstream.mockImplementation(async (_, init: RequestInit) => {
+    await consume(init);
+    return new Promise((_, reject) => {
+      if (init.signal?.aborted) reject(new Error('aborted'));
+      else init.signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+    });
+  });
+  const controller = new AbortController();
+  const pending = [POST(req({ signal: controller.signal })), referencePost({ signal: controller.signal }),
+    POST(req({ signal: controller.signal })), referencePost({ signal: controller.signal })];
+  expect((await referencePost()).status).toBe(429);
+  expect(fetchUpstream).toHaveBeenCalledTimes(4);
+  controller.abort();
+  expect((await Promise.all(pending)).map((response) => response.status)).toEqual([408, 408, 408, 408]);
+  const stalledRead = referencePost({ body: new ReadableStream({ pull: () => new Promise(() => {}) }, { highWaterMark: 0 }) });
+  const stalledUpstream = referencePost();
+  await vi.advanceTimersByTimeAsync(15_000);
+  expect((await stalledRead).status).toBe(408);
+  expect((await stalledUpstream).status).toBe(502);
 });

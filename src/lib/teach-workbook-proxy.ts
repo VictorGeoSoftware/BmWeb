@@ -1,13 +1,11 @@
 import { isQA } from '@/lib/env';
-import { readWorkbookReceipt, validWorkbookFilename, workbookBodyLimit, workbookFilenameHeader, workbookMediaType } from '@/lib/teach-workbook';
+import { referenceBodyLimit, referenceFilenameHeader, referenceFormats, referenceKindForMediaType, validReferenceFilename } from '@/lib/teach-reference';
+import { readTeachReceipt, validTeachFilename, validWorkbookFilename, workbookBodyLimit, workbookFilenameHeader, workbookMediaType } from '@/lib/teach-workbook';
 
 const headers = { 'Cache-Control': 'no-store' };
-const errors: Record<number, string> = { 400: 'invalid_message', 413: 'upload_too_large', 415: 'unsupported_workbook' };
+type UploadPath = 'messages' | 'references';
+const errors: Record<number, string> = { 400: 'invalid_message', 413: 'upload_too_large' };
 let active = 0;
-
-function error(status: number) {
-  return errors[status] ? Response.json({ error: errors[status] }, { status, headers }) : new Response(null, { status, headers });
-}
 
 function filenameFromHeader(wire: string | null) {
   if (!wire || !/^[A-Za-z0-9_-]{1,340}$/.test(wire)) return null;
@@ -15,7 +13,7 @@ function filenameFromHeader(wire: string | null) {
     const bytes = Buffer.from(wire, 'base64url');
     if (bytes.length > 255 || bytes.toString('base64url') !== wire) return null;
     const name = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
-    return validWorkbookFilename(name) ? name : null;
+    return validTeachFilename(name) ? name : null;
   } catch { return null; }
 }
 
@@ -39,23 +37,36 @@ async function boundedReceipt(response: Response) {
   }
 }
 
-export async function forwardTeachWorkbook(request: {
+type UploadRequest = {
   url: string;
   values: (name: string) => string[];
   body: () => ReadableStream<Uint8Array> | null;
   signal: AbortSignal;
-}) {
+};
+
+export async function forwardTeachUpload(request: UploadRequest, path: UploadPath) {
+  const reference = path === 'references';
+  const filenameHeader = reference ? referenceFilenameHeader : workbookFilenameHeader;
+  const bodyLimit = reference ? referenceBodyLimit : workbookBodyLimit;
+  function error(status: number) {
+    const code = status === 415 ? (reference ? 'unsupported_reference' : 'unsupported_workbook') : errors[status];
+    return code ? Response.json({ error: code }, { status, headers }) : new Response(null, { status, headers });
+  }
   if (!isQA) return error(404);
   const [authorization] = request.values('authorization');
   if (!authorization?.startsWith('Bearer ') || !authorization.slice(7).trim()) return error(401);
   if (active >= 4) return error(429);
   const types = request.values('content-type');
   const [type] = types;
-  const names = request.values(workbookFilenameHeader);
+  const names = request.values(filenameHeader);
   const [wire] = names;
   const filename = filenameFromHeader(wire ?? null);
   if (request.url.includes('?') || types.length > 1 || type?.includes(',') || names.length !== 1 || !filename) return error(400);
-  if (type?.toLowerCase() !== workbookMediaType || request.values('content-encoding').length) return error(415);
+  const kind = reference ? referenceKindForMediaType(type) : 'workbook';
+  if (!kind) return error(415);
+  const mediaType = kind === 'workbook' ? workbookMediaType : referenceFormats[kind].mediaType;
+  if (kind === 'workbook' ? !validWorkbookFilename(filename) : !validReferenceFilename(filename, kind)) return error(400);
+  if (type?.toLowerCase() !== mediaType || request.values('content-encoding').length) return error(415);
   const backend = process.env.BM_BACKEND_URL;
   if (!backend) return error(502);
 
@@ -88,7 +99,7 @@ export async function forwardTeachWorkbook(request: {
             if (!received) { stop(400); controller.error(new Error('Empty upload')); return; }
             complete = true;
             controller.close();
-          } else if (part.value.byteLength > workbookBodyLimit - received) {
+          } else if (part.value.byteLength > bodyLimit - received) {
             stop(413);
             controller.error(new Error('Upload limit'));
           } else {
@@ -102,9 +113,9 @@ export async function forwardTeachWorkbook(request: {
     }, { highWaterMark: 0 });
     const init: RequestInit & { duplex: 'half' } = {
       method: 'POST', body, duplex: 'half', signal: upstream.signal, cache: 'no-store', redirect: 'error',
-      headers: { Authorization: authorization, 'Content-Type': workbookMediaType, [workbookFilenameHeader]: wire },
+      headers: { Authorization: authorization, 'Content-Type': mediaType, [filenameHeader]: wire },
     };
-    const response = await fetch(`${backend.replace(/\/$/, '')}/api/v1/teach-me/messages`, init);
+    const response = await fetch(`${backend.replace(/\/$/, '')}/api/v1/teach-me/${path}`, init);
     if (response.status !== 200 || failure || !complete) {
       void response.body?.cancel().catch(() => {});
       if (failure) return error(failure);
@@ -114,7 +125,7 @@ export async function forwardTeachWorkbook(request: {
       void response.body?.cancel().catch(() => {});
       return error(502);
     }
-    const attachment = readWorkbookReceipt(await boundedReceipt(response), filename, received);
+    const attachment = readTeachReceipt(await boundedReceipt(response), kind, filename, received);
     return attachment && !failure ? Response.json({ attachment }, { headers }) : error(failure ?? 502);
   } catch { return error(failure ?? 502); }
   finally {
