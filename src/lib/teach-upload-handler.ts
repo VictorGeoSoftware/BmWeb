@@ -4,7 +4,7 @@ import { forwardTeachUpload, forwardTeachProposalImport } from '@/lib/teach-work
 // App Router receives Node's normalized headers (duplicate Content-Type can be lost).
 // This Pages API boundary exposes rawHeaders and leaves IncomingMessage unparsed.
 export async function handleTeachUpload(req: NextApiRequest, res: NextApiResponse,
-  path: 'messages' | 'references' | 'clarifications' | 'activation' | 'proposal-import' | 'proposal-imports', fixturePins?: ReadonlySet<string>) {
+  path: 'messages' | 'references' | 'clarifications' | 'activation' | 'proposal-import' | 'proposal-imports' | 'proposal-validation', fixturePins?: ReadonlySet<string>) {
   const method = path === 'proposal-imports' ? 'GET' : 'POST';
   if (req.method !== method) {
     res.setHeader('Allow', method);
@@ -32,7 +32,7 @@ export async function handleTeachUpload(req: NextApiRequest, res: NextApiRespons
       names: () => req.rawHeaders.filter((_, i) => i % 2 === 0),
       body: () => requestBytes(req),
     };
-    const response = await (path === 'proposal-import' || path === 'proposal-imports'
+    const response = await (path === 'proposal-import' || path === 'proposal-imports' || path === 'proposal-validation'
       ? forwardTeachProposalImport(request, path) : forwardTeachUpload(request, path, fixturePins));
     if (res.destroyed) return;
     // On early rejection, do not consume the rest of the upload for keep-alive.

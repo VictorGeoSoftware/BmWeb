@@ -164,3 +164,31 @@ Node 20: `./init.sh` (sin `--dev`) y
 El README de BmBackend describe el joint obligatorio con Netty y PostgreSQL 16
 desechable. No usa servicios de BM ni certifica una sesión de Firebase o un
 despliegue; no valida ni promociona revisiones.
+
+## Enséñame: validar el resultado de una importación (harness sintético)
+
+Apagado por defecto y solo en el piloto de importación QA aislado. La interfaz
+requiere `NEXT_PUBLIC_TEACH_VALIDATION_PILOT=true` y Pages su opt-in independiente
+`BM_TEACH_VALIDATION_PILOT=true`, además de los requisitos de importación de arriba.
+No configurarlos en `.env`, servicios ni hosting. Ktor es la autoridad; los flags
+no montan el caso de uso ni otorgan permisos.
+
+En `?view=excel`, revisa valores/celdas y abre «Validar resultado» en la tarjeta
+de la importación exacta. Cancelar no envía nada. La confirmación explícita llama
+a `POST /api/teach-me/proposal-validation` y Pages retransmite el JSON sin
+parsearlo, solo con longitud fija (hasta 1 KiB), hacia el loopback del harness.
+`GET /api/teach-me/proposal-imports?validation=1` (seguido de `&cursor=<id>` si
+corresponde) recupera el estado persistido del mismo objetivo; el GET normal sigue
+sin devolver la referencia. El éxito del POST no añade una marca optimista.
+Si se pierde la respuesta, consulta ese objetivo o vuelve a confirmar el mismo
+resultado deliberadamente; no hay reintento automático ni afirmación de rollback.
+Cambiar de cuenta, cerrar la vista o conocer una denegación abandona la operación;
+no se guarda estado en el navegador.
+
+La constancia es de una carga histórica y no cambia la revisión activa. No se
+transfiere a otra carga ni a una nueva revisión. No afecta al listado o carga PDF,
+ni abre opciones de promoción. Con Node 20: `./init.sh` (sin `--dev`) y el foco de
+importación anterior, añadiendo `src/components/teach-proposal-validation.test.tsx`,
+`src/components/teach-me-access.test.tsx` y `src/components/teach-skill-activation.test.tsx`.
+El README de BmBackend describe el joint obligatorio con Netty y PostgreSQL 16
+desechable. No se usa un stack QA ni servicios de BM; no es browser E2E.

@@ -6,7 +6,8 @@ import { readTeachReceipt, validTeachFilename, validWorkbookFilename, workbookBo
 import { isTeachSupplierDraftEnabled, readSupplierDraftResult, supplierDraftBodyLimit, supplierDraftMediaType, supplierDraftRevisionFields } from '@/lib/teach-supplier-draft';
 import { draftPreviewBodyLimit, draftPreviewMediaType, draftPreviewRevisionFields, isTeachDraftPreviewEnabled, previewProfile, profileWorkbookDigest, readTeachDraftPreviewResult } from '@/lib/teach-draft-preview';
 import { activationBodyLimit, qaPilotPreviewMediaType, parseActivationRequest, readActivationResult, readPilotPreview } from '@/lib/teach-skill-activation';
-import { importAttemptHeader, importConflicts, readImportPage, readImportReceipt, validImportAttempt, validImportId } from '@/lib/teach-proposal-import';
+import { importAttemptHeader, importConflicts, importListResponseLimit, importsQuery, readImportPage, readImportReceipt, readValidationResult,
+  validationBodyLimit, validationResponseLimit, validImportAttempt, validImportId } from '@/lib/teach-proposal-import';
 import { exactTeachObject } from '@/lib/teach-clarification';
 
 const headers = { 'Cache-Control': 'no-store' };
@@ -46,12 +47,19 @@ async function boundedJson(response: Response, strictBOM: boolean, limit = clari
 
 const importOverrides = new Set(['env', 'environment', 'supplier', 'supplierkey', 'profile', 'profilekey',
   'revision', 'revisionid', 'generation', 'hash', 'sha256', 'workbookhash', 'workbooksha256', 'storeid', 'manifest', 'actor', 'uid']);
+const validationOverrides = new Set(['workbookfilename', 'importattempt', 'validationref', 'importid', 'batchid',
+  'confirmexpectedprices', 'result', 'receipt', 'digest', 'prices', 'httpmethodoverride', 'methodoverride', 'httpmethod',
+  'originalurl', 'rewriteurl', 'trailer', 'contenttransferencoding']);
 const jsonType = /^application\/json(?:\s*;\s*charset=(?:utf-8|"utf-8"))?$/i;
 
-export async function forwardTeachProposalImport(request: UploadRequest & { names: () => string[] }, path: 'proposal-import' | 'proposal-imports') {
+export async function forwardTeachProposalImport(request: UploadRequest & { names: () => string[] }, path: 'proposal-import' | 'proposal-imports' | 'proposal-validation') {
   const list = path === 'proposal-imports';
+  const validate = path === 'proposal-validation';
   const plain = (status: number) => new Response(null, { status, headers });
   if (!isQA || process.env.BM_TEACH_IMPORT_PILOT !== 'true') return plain(404);
+  const query = request.url.includes('?') ? request.url.slice(request.url.indexOf('?') + 1) : null;
+  const enriched = list && !!query?.startsWith('validation=');
+  if ((validate || enriched) && process.env.BM_TEACH_VALIDATION_PILOT !== 'true') return plain(404);
   const [authorization, extraAuth] = request.values('authorization');
   if (extraAuth !== undefined || !authorization?.startsWith('Bearer ') || !authorization.slice(7).trim() || authorization.includes(',')) return plain(401);
   const contentTypes = request.values('content-type');
@@ -59,17 +67,27 @@ export async function forwardTeachProposalImport(request: UploadRequest & { name
   const lengths = request.values('content-length');
   const names = request.values(workbookFilenameHeader);
   const attempts = request.values(importAttemptHeader);
-  if (request.values('content-disposition').length || request.values(referenceFilenameHeader).length || request.names().some(name =>
-    importOverrides.has(name.toLowerCase().replace(/_/g, '-').replace(/^x-/, '').replace(/^bm-/, '').replace(/^teach-/, '').replace(/-/g, '')))) return plain(400);
-  const query = request.url.includes('?') ? request.url.slice(request.url.indexOf('?') + 1) : null;
+  if (request.values('content-disposition').length || request.values(referenceFilenameHeader).length || request.names().some(name => {
+    const key = name.toLowerCase().replace(/_/g, '-').replace(/^x-/, '').replace(/^bm-/, '').replace(/^teach-/, '').replace(/-/g, '');
+    return importOverrides.has(key) || ((enriched || validate) && validationOverrides.has(key));
+  })) return plain(400);
   let cursor: string | null = null;
   if (list) {
-    if (query !== null) {
+    if (enriched) {
+      const match = /^validation=1(?:&cursor=([1-9][0-9]{0,18}))?$/.exec(query ?? '');
+      if (!match || match[0] !== query || (match[1] !== undefined && !validImportId(match[1]))) return plain(400);
+      cursor = match[1] ?? null;
+    } else if (query !== null) {
       cursor = query.startsWith('cursor=') ? query.slice(7) : '';
       if (!validImportId(cursor)) return plain(400);
     }
     if (contentTypes.length || encodings.length || names.length || attempts.length || request.values('content-encoding').length ||
         (lengths.length !== 0 && (lengths.length !== 1 || lengths[0] !== '0'))) return plain(400);
+  } else if (validate) {
+    if (query !== null || encodings.length || lengths.length !== 1 || !validImportId(lengths[0]) ||
+        contentTypes.length > 1 || contentTypes[0]?.includes(',') || names.length || attempts.length) return plain(400);
+    if (Number(lengths[0]) > validationBodyLimit) return plain(413);
+    if (contentTypes[0]?.toLowerCase() !== 'application/json' || request.values('content-encoding').length) return plain(415);
   } else {
     const filename = names.length === 1 ? filenameFromHeader(names[0]) : null;
     if (query !== null || !filename || !validWorkbookFilename(filename) || attempts.length !== 1 || !validImportAttempt(attempts[0]) ||
@@ -109,8 +127,10 @@ export async function forwardTeachProposalImport(request: UploadRequest & { name
           if (!size || (lengths.length && size !== Number(lengths[0]))) { stop(400); controller.error(new Error('Invalid size')); return; }
           complete = true;
           controller.close();
-        } else if (part.value.byteLength > workbookBodyLimit - size) {
+        } else if (part.value.byteLength > (validate ? validationBodyLimit : workbookBodyLimit) - size) {
           stop(413); controller.error(new Error('Upload limit'));
+        } else if (validate && part.value.byteLength > Number(lengths[0]) - size) {
+          stop(400); controller.error(new Error('Invalid size'));
         } else {
           size += part.value.byteLength;
           controller.enqueue(part.value);
@@ -123,14 +143,14 @@ export async function forwardTeachProposalImport(request: UploadRequest & { name
   try {
     const init: RequestInit & { duplex?: 'half' } = {
       method: list ? 'GET' : 'POST', signal: upstream.signal, cache: 'no-store', redirect: 'error',
-      headers: { Authorization: authorization, ...(list ? {} : { 'Content-Type': workbookMediaType,
-        [workbookFilenameHeader]: names[0], [importAttemptHeader]: attempts[0] }) },
+      headers: { Authorization: authorization, ...(list ? {} : validate ? { 'Content-Type': 'application/json', 'Content-Length': lengths[0] }
+        : { 'Content-Type': workbookMediaType, [workbookFilenameHeader]: names[0], [importAttemptHeader]: attempts[0] }) },
       ...(list ? {} : { body, duplex: 'half' }),
     };
-    const response = await fetch(`http://127.0.0.1:${match[1]}/api/v1/teach-me/${path}${cursor ? '?cursor=' + cursor : ''}`, init);
+    const response = await fetch(`http://127.0.0.1:${match[1]}/api/v1/teach-me/${path}${list ? importsQuery(cursor, enriched) : ''}`, init);
     if (failure) return plain(failure);
     const success = response.status === 200 || (!list && response.status === 201);
-    const conflict = !list && response.status === 409;
+    const conflict = !list && !validate && response.status === 409;
     if (!success && !conflict) {
       void response.body?.cancel().catch(() => {});
       return plain([400, 401, 403, 404, 405, 408, 413, 415, 429, 500, 503].includes(response.status) ? response.status : 502);
@@ -139,11 +159,11 @@ export async function forwardTeachProposalImport(request: UploadRequest & { name
       void response.body?.cancel().catch(() => {});
       return plain(502);
     }
-    const limit = list ? 16 * 1024 : 4 * 1024;
+    const limit = list ? importListResponseLimit : validate ? validationResponseLimit : 4 * 1024;
     const value = await boundedJson(response, true, limit);
     if (failure) return plain(failure);
     const result = conflict ? (exactTeachObject(value, 'error') && importConflicts.some(it => it === value.error) ? { error: value.error } : null)
-      : list ? readImportPage(value, cursor) : readImportReceipt(value, response.status);
+      : list ? readImportPage(value, cursor, enriched) : validate ? readValidationResult(value, response.status) : readImportReceipt(value, response.status);
     if (!result) return plain(502);
     const json = JSON.stringify(result);
     if (Buffer.byteLength(json) > limit) return plain(502);
