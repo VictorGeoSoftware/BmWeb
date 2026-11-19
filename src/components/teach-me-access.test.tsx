@@ -19,10 +19,11 @@ beforeEach(() => {
   state.isQA = true;
   state.path = '/dashboard';
   fetchAccess.mockReset();
+  vi.stubEnv('NEXT_PUBLIC_TEACH_CLARIFY_LOCAL', undefined);
   vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
 });
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 it('shows the sidebar link only after a grant and removes it on a denied navigation check', async () => {
   fetchAccess.mockResolvedValueOnce(new Response(null, { status: 204 }));
@@ -60,6 +61,7 @@ it('checks direct visits before rendering the QA page', async () => {
   expect(screen.getByRole('status')).toHaveTextContent('Comprobando acceso');
   expect(await screen.findByRole('heading', { name: 'Enséñame' })).toBeVisible();
   expect(screen.getByText('QA')).toBeVisible();
+  expect(screen.queryByRole('button', { name: /Probar aclaración/ })).not.toBeInTheDocument();
 });
 
 it('does not render a denied direct visit', async () => {
