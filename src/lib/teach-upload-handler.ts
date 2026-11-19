@@ -1,12 +1,13 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { forwardTeachUpload } from '@/lib/teach-workbook-proxy';
+import { forwardTeachUpload, forwardTeachProposalImport } from '@/lib/teach-workbook-proxy';
 
 // App Router receives Node's normalized headers (duplicate Content-Type can be lost).
 // This Pages API boundary exposes rawHeaders and leaves IncomingMessage unparsed.
 export async function handleTeachUpload(req: NextApiRequest, res: NextApiResponse,
-  path: 'messages' | 'references' | 'clarifications' | 'activation', fixturePins?: ReadonlySet<string>) {
-  if (req.method !== 'POST') {
-    res.setHeader('Allow', 'POST');
+  path: 'messages' | 'references' | 'clarifications' | 'activation' | 'proposal-import' | 'proposal-imports', fixturePins?: ReadonlySet<string>) {
+  const method = path === 'proposal-imports' ? 'GET' : 'POST';
+  if (req.method !== method) {
+    res.setHeader('Allow', method);
     res.setHeader('Cache-Control', 'no-store');
     res.status(405).end();
     return;
@@ -17,9 +18,9 @@ export async function handleTeachUpload(req: NextApiRequest, res: NextApiRespons
   req.on('aborted', aborted).on('error', aborted);
   res.on('close', aborted);
   try {
-    const response = await forwardTeachUpload({
+    const request = {
       url: req.url ?? '', signal: disconnect.signal,
-      values(name) {
+      values(name: string) {
         const values: string[] = [];
         for (let i = 0; i < req.rawHeaders.length; i += 2) {
           if (req.rawHeaders[i].toLowerCase() === name.toLowerCase()) {
@@ -28,8 +29,11 @@ export async function handleTeachUpload(req: NextApiRequest, res: NextApiRespons
         }
         return values;
       },
+      names: () => req.rawHeaders.filter((_, i) => i % 2 === 0),
       body: () => requestBytes(req),
-    }, path, fixturePins);
+    };
+    const response = await (path === 'proposal-import' || path === 'proposal-imports'
+      ? forwardTeachProposalImport(request, path) : forwardTeachUpload(request, path, fixturePins));
     if (res.destroyed) return;
     // On early rejection, do not consume the rest of the upload for keep-alive.
     if (!req.readableEnded) res.setHeader('Connection', 'close');

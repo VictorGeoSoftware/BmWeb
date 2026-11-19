@@ -73,6 +73,13 @@ function row(value: unknown, number: number): value is Row {
     value.prices.every((entry, i) => price(entry, number, previewRule.bindings[i]));
 }
 
+export function readTeachPriceRows(value: unknown): Row[] | null {
+  if (!Array.isArray(value) || value.length !== previewRule.fixedRows.length ||
+      !value.every((entry, i): entry is Row => row(entry, previewRule.fixedRows[i])) ||
+      new Set(value.map((entry) => entry.proposal)).size !== value.length) return null;
+  return value;
+}
+
 const canonicalPins: ReadonlySet<string> = new Set([profileWorkbookDigest]);
 
 export function readTeachDraftPreviewResult(value: unknown, pins = canonicalPins): Result | null {
@@ -83,9 +90,8 @@ export function readTeachDraftPreviewResult(value: unknown, pins = canonicalPins
     return { kind: 'draft', draft: { ...draft, schemaVersion: 2, rule: previewRule } };
   }
   if (!exactTeachObject(value, 'kind', ...identityKeys, 'rows') || value.kind !== 'preview' || !identity(value, pins) || !Array.isArray(value.rows)) return null;
-  const rows = value.rows;
-  if (rows.length !== previewRule.fixedRows.length || !rows.every((entry, i): entry is Row => row(entry, previewRule.fixedRows[i])) ||
-      new Set(rows.map((entry) => entry.proposal)).size !== rows.length) return null;
+  const rows = readTeachPriceRows(value.rows);
+  if (!rows) return null;
   return { ...value, kind: 'preview', rows };
 }
 

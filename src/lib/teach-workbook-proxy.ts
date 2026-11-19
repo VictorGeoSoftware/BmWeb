@@ -6,6 +6,8 @@ import { readTeachReceipt, validTeachFilename, validWorkbookFilename, workbookBo
 import { isTeachSupplierDraftEnabled, readSupplierDraftResult, supplierDraftBodyLimit, supplierDraftMediaType, supplierDraftRevisionFields } from '@/lib/teach-supplier-draft';
 import { draftPreviewBodyLimit, draftPreviewMediaType, draftPreviewRevisionFields, isTeachDraftPreviewEnabled, previewProfile, profileWorkbookDigest, readTeachDraftPreviewResult } from '@/lib/teach-draft-preview';
 import { activationBodyLimit, qaPilotPreviewMediaType, parseActivationRequest, readActivationResult, readPilotPreview } from '@/lib/teach-skill-activation';
+import { importAttemptHeader, importConflicts, readImportPage, readImportReceipt, validImportAttempt, validImportId } from '@/lib/teach-proposal-import';
+import { exactTeachObject } from '@/lib/teach-clarification';
 
 const headers = { 'Cache-Control': 'no-store' };
 type UploadPath = 'messages' | 'references' | 'clarifications' | 'activation';
@@ -22,10 +24,10 @@ function filenameFromHeader(wire: string | null) {
   } catch { return null; }
 }
 
-async function boundedJson(response: Response, strictBOM: boolean) {
+async function boundedJson(response: Response, strictBOM: boolean, limit = clarificationResponseLimit) {
   const reader = response.body?.getReader();
   if (!reader) throw new Error('Missing receipt');
-  const bytes = new Uint8Array(clarificationResponseLimit);
+  const bytes = new Uint8Array(limit);
   let length = 0;
   try {
     while (true) {
@@ -39,6 +41,121 @@ async function boundedJson(response: Response, strictBOM: boolean) {
   } finally {
     void reader.cancel().catch(() => {});
     reader.releaseLock();
+  }
+}
+
+const importOverrides = new Set(['env', 'environment', 'supplier', 'supplierkey', 'profile', 'profilekey',
+  'revision', 'revisionid', 'generation', 'hash', 'sha256', 'workbookhash', 'workbooksha256', 'storeid', 'manifest', 'actor', 'uid']);
+const jsonType = /^application\/json(?:\s*;\s*charset=(?:utf-8|"utf-8"))?$/i;
+
+export async function forwardTeachProposalImport(request: UploadRequest & { names: () => string[] }, path: 'proposal-import' | 'proposal-imports') {
+  const list = path === 'proposal-imports';
+  const plain = (status: number) => new Response(null, { status, headers });
+  if (!isQA || process.env.BM_TEACH_IMPORT_PILOT !== 'true') return plain(404);
+  const [authorization, extraAuth] = request.values('authorization');
+  if (extraAuth !== undefined || !authorization?.startsWith('Bearer ') || !authorization.slice(7).trim() || authorization.includes(',')) return plain(401);
+  const contentTypes = request.values('content-type');
+  const encodings = request.values('transfer-encoding');
+  const lengths = request.values('content-length');
+  const names = request.values(workbookFilenameHeader);
+  const attempts = request.values(importAttemptHeader);
+  if (request.values('content-disposition').length || request.values(referenceFilenameHeader).length || request.names().some(name =>
+    importOverrides.has(name.toLowerCase().replace(/_/g, '-').replace(/^x-/, '').replace(/^bm-/, '').replace(/^teach-/, '').replace(/-/g, '')))) return plain(400);
+  const query = request.url.includes('?') ? request.url.slice(request.url.indexOf('?') + 1) : null;
+  let cursor: string | null = null;
+  if (list) {
+    if (query !== null) {
+      cursor = query.startsWith('cursor=') ? query.slice(7) : '';
+      if (!validImportId(cursor)) return plain(400);
+    }
+    if (contentTypes.length || encodings.length || names.length || attempts.length || request.values('content-encoding').length ||
+        (lengths.length !== 0 && (lengths.length !== 1 || lengths[0] !== '0'))) return plain(400);
+  } else {
+    const filename = names.length === 1 ? filenameFromHeader(names[0]) : null;
+    if (query !== null || !filename || !validWorkbookFilename(filename) || attempts.length !== 1 || !validImportAttempt(attempts[0]) ||
+        contentTypes.length > 1 || contentTypes[0]?.includes(',') || lengths.length > 1 ||
+        (encodings.length && (encodings.length !== 1 || encodings[0].toLowerCase() !== 'chunked' || lengths.length)) ||
+        (!encodings.length && !lengths.length)) return plain(400);
+    if (contentTypes[0]?.toLowerCase() !== workbookMediaType || request.values('content-encoding').length) return plain(415);
+    if (lengths.length) {
+      if (!validImportId(lengths[0])) return plain(400);
+      if (Number(lengths[0]) > workbookBodyLimit) return plain(413);
+    }
+  }
+  const target = process.env.BM_BACKEND_URL;
+  const match = target && /^http:\/\/127\.0\.0\.1:([1-9][0-9]{0,4})\/?$/.exec(target);
+  if (!match || match[0] !== target || Number(match[1]) > 65535) return plain(502);
+  if (active >= 4) return plain(429);
+  const reader = list ? null : request.body()?.getReader();
+  if (!list && !reader) return plain(400);
+
+  active++;
+  const upstream = new AbortController();
+  let failure: number | undefined;
+  let size = 0;
+  let complete = list;
+  const stop = (status: number) => { failure ??= status; upstream.abort(); void reader?.cancel().catch(() => {}); };
+  const onDisconnect = () => stop(408);
+  request.signal.addEventListener('abort', onDisconnect, { once: true });
+  if (request.signal.aborted) onDisconnect();
+  const timer = setTimeout(() => stop(408), 15_000);
+
+  const body = reader ? new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const part = await reader.read();
+        if (failure) { controller.error(new Error('Import stopped')); return; }
+        if (part.done) {
+          if (!size || (lengths.length && size !== Number(lengths[0]))) { stop(400); controller.error(new Error('Invalid size')); return; }
+          complete = true;
+          controller.close();
+        } else if (part.value.byteLength > workbookBodyLimit - size) {
+          stop(413); controller.error(new Error('Upload limit'));
+        } else {
+          size += part.value.byteLength;
+          controller.enqueue(part.value);
+        }
+      } catch { controller.error(new Error('Import interrupted')); }
+    },
+    cancel() { void reader.cancel().catch(() => {}); },
+  }, { highWaterMark: 0 }) : undefined;
+
+  try {
+    const init: RequestInit & { duplex?: 'half' } = {
+      method: list ? 'GET' : 'POST', signal: upstream.signal, cache: 'no-store', redirect: 'error',
+      headers: { Authorization: authorization, ...(list ? {} : { 'Content-Type': workbookMediaType,
+        [workbookFilenameHeader]: names[0], [importAttemptHeader]: attempts[0] }) },
+      ...(list ? {} : { body, duplex: 'half' }),
+    };
+    const response = await fetch(`http://127.0.0.1:${match[1]}/api/v1/teach-me/${path}${cursor ? '?cursor=' + cursor : ''}`, init);
+    if (failure) return plain(failure);
+    const success = response.status === 200 || (!list && response.status === 201);
+    const conflict = !list && response.status === 409;
+    if (!success && !conflict) {
+      void response.body?.cancel().catch(() => {});
+      return plain([400, 401, 403, 404, 405, 408, 413, 415, 429, 500, 503].includes(response.status) ? response.status : 502);
+    }
+    if (!complete || !jsonType.test(response.headers.get('Content-Type') ?? '')) {
+      void response.body?.cancel().catch(() => {});
+      return plain(502);
+    }
+    const limit = list ? 16 * 1024 : 4 * 1024;
+    const value = await boundedJson(response, true, limit);
+    if (failure) return plain(failure);
+    const result = conflict ? (exactTeachObject(value, 'error') && importConflicts.some(it => it === value.error) ? { error: value.error } : null)
+      : list ? readImportPage(value, cursor) : readImportReceipt(value, response.status);
+    if (!result) return plain(502);
+    const json = JSON.stringify(result);
+    if (Buffer.byteLength(json) > limit) return plain(502);
+    return new Response(json, { status: response.status, headers: { ...headers, 'Content-Type': 'application/json; charset=utf-8' } });
+  } catch { return plain(failure ?? 502); }
+  finally {
+    clearTimeout(timer);
+    request.signal.removeEventListener('abort', onDisconnect);
+    upstream.abort();
+    void reader?.cancel().catch(() => {});
+    reader?.releaseLock();
+    active--;
   }
 }
 

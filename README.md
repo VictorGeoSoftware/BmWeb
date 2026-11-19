@@ -130,3 +130,37 @@ Con Node 20: `./init.sh` (sin `--dev`) y
 `npm test -- src/app/api/teach-me src/components/teach-me-access.test.tsx src/components/teach-draft-preview.test.tsx src/components/teach-skill-activation.test.tsx`.
 El README de BmBackend documenta el joint obligatorio con Netty y PostgreSQL 16
 desechable. No se usa un stack QA ni acceso real; QA alojado queda fuera del piloto.
+
+## Enséñame: importar y listar propuestas Excel (harness sintético)
+
+Apagado por defecto. Solo para el harness aislado: `NEXT_PUBLIC_APP_ENV=qa`,
+`NEXT_PUBLIC_TEACH_IMPORT_PILOT=true` para la vista y un opt-in independiente
+`BM_TEACH_IMPORT_PILOT=true` para Pages. No configurar en `.env`, servicios ni
+hosting. Pages solo admite un destino `http://127.0.0.1:<puerto>` inyectado por
+el harness. Mostrar el panel no autoriza la carga ni la lectura: Ktor decide
+cada operación.
+
+El dashboard carga un XLSX crudo (máximo 5 MiB) por «Excel · QA sintético», sin
+tocar la cola PDF. El listado tiene una sección Excel de solo lectura separada.
+El enlace `?view=excel` abre esa sección sin consultar el listado PDF. Los
+valores, unidades, celdas y revisión exacta se obtienen del listado posterior,
+no del recibo de la carga. Si se pierde la confirmación, consulta el listado o
+repite el mismo intento explícitamente con el archivo aún seleccionado. Un
+rechazo de la repetición no confirma ni deshace el envío anterior: la vista
+conserva el mismo archivo e intento hasta recibir un recibo válido o descartarlos.
+Cerrar, cambiar de cuenta o recargar no conserva el archivo, el intento ni sus
+resultados.
+
+Pages retransmite `POST /api/teach-me/proposal-import` y `GET
+/api/teach-me/proposal-imports` a sus equivalentes en Ktor, sin redirecciones,
+cache, multipart Excel ni `bodyParser`. El POST lleva solo el bearer y los
+metadatos permitidos de la carga (media type, basename en base64url y el intento
+de 32 hex); el GET admite solo el cursor exclusivo. Las respuestas JSON cerradas
+están acotadas a 4 KiB y 16 KiB, respectivamente. Ambos comparten los cuatro
+puestos del proxy y un plazo local de 15 segundos.
+
+Node 20: `./init.sh` (sin `--dev`) y
+`npm test -- src/app/api/price-proposal/upload/route.test.ts src/components/pdf-upload.test.tsx src/lib/upload-queue.test.ts src/app/api/teach-me src/components/teach-proposal-import.test.tsx`.
+El README de BmBackend describe el joint obligatorio con Netty y PostgreSQL 16
+desechable. No usa servicios de BM ni certifica una sesión de Firebase o un
+despliegue; no valida ni promociona revisiones.

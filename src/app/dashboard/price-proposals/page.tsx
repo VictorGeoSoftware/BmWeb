@@ -1,6 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
+import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
+import { TeachProposalImport } from '@/components/teach-proposal-import';
+import { isTeachImportEnabled } from '@/lib/teach-proposal-import';
 import {
   Table,
   TableBody,
@@ -195,6 +199,23 @@ function LoadingSkeleton() {
 }
 
 export default function PriceProposalsPage() {
+  if (!isTeachImportEnabled()) return <PdfPriceProposals />;
+  return <Suspense fallback={<p role="status">Cargando propuestas…</p>}><PilotPriceProposals /></Suspense>;
+}
+
+function PilotPriceProposals() {
+  const excelOnly = useSearchParams()?.get('view') === 'excel';
+  return (
+    <>
+      {excelOnly ? <header><h1 className="text-3xl font-bold font-headline">Propuestas Excel</h1>
+        <Link className="underline" href="/dashboard/price-proposals">Volver a propuestas PDF</Link>
+      </header> : <PdfPriceProposals />}
+      <TeachProposalImport key={excelOnly ? 'isolated' : 'combined'} list />
+    </>
+  );
+}
+
+function PdfPriceProposals() {
   const { toast } = useToast();
   const [data, setData] = useState<PriceTableResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
