@@ -3,7 +3,8 @@ import { forwardTeachUpload } from '@/lib/teach-workbook-proxy';
 
 // App Router receives Node's normalized headers (duplicate Content-Type can be lost).
 // This Pages API boundary exposes rawHeaders and leaves IncomingMessage unparsed.
-export async function handleTeachUpload(req: NextApiRequest, res: NextApiResponse, path: 'messages' | 'references' | 'clarifications') {
+export async function handleTeachUpload(req: NextApiRequest, res: NextApiResponse,
+  path: 'messages' | 'references' | 'clarifications' | 'activation', fixturePins?: ReadonlySet<string>) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
     res.setHeader('Cache-Control', 'no-store');
@@ -28,7 +29,7 @@ export async function handleTeachUpload(req: NextApiRequest, res: NextApiRespons
         return values;
       },
       body: () => requestBytes(req),
-    }, path);
+    }, path, fixturePins);
     if (res.destroyed) return;
     // On early rejection, do not consume the rest of the upload for keep-alive.
     if (!req.readableEnded) res.setHeader('Connection', 'close');

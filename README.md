@@ -100,3 +100,33 @@ Véase el README de BmBackend para el contrato canónico del ID y el gate joint.
 
 Verificación con Node 20: `./init.sh` (sin `--dev`) y
 `npm test -- src/app/api/teach-me src/components/teach-clarification-composer.test.tsx src/components/teach-me-access.test.tsx src/components/teach-draft-preview.test.tsx`.
+
+## Enséñame: activar una revisión en QA (harness sintético)
+
+Apagado por defecto. Solo para verificación local aislada: además de los opt-ins de
+previsualización y `NEXT_PUBLIC_APP_ENV=qa`, la UI usa `NEXT_PUBLIC_TEACH_ACTIVATION_PILOT=true`
+y Pages usa su opt-in independiente `BM_TEACH_ACTIVATION_PILOT=true`. No poner estos
+flags en `.env`, servicios ni hosting. El proxy piloto rechaza cualquier destino
+que no sea `http://127.0.0.1:<puerto>` del harness; no sigue redirecciones. Solo la
+composición de pruebas de BmBackend tiene autoridad para emitir pruebas o escribir.
+
+«QA · piloto sintético» muestra el resultado cotejable, la revisión nueva y la
+activa que se reemplazaría, o «Ninguna». Tras una previsualización exitosa y vigente,
+«Activar en QA» abre una confirmación explícita de ambas revisiones. El recibo opaco
+solo vive en la vista, no se recupera del historial y caduca a los 300 s. Un conflicto
+exige una prueba y confirmación nuevas. Si se pierde la respuesta, volver a
+previsualizar para comprobar la activa, sin reintentar ni afirmar que no cambió.
+
+Pages retransmite el V2 `preview` (no `prepare`) con el media type
+`application/vnd.bm.teach-draft-preview-qa-pilot` a la ruta de aclaraciones. El POST
+de confirmación `/api/teach-me/activation` retransmite JSON cerrado (2 KiB) con
+`revisionId`, `expectedRevisionId`, `expectedGeneration` y `receipt`, sin nombres,
+adjuntos, resultados, query o codificación. Ambos son `no-store` y comparten los
+cuatro puestos y 15 s del proxy. El éxito de 4 KiB está ligado a la revisión,
+registro y estado esperados. No confiere acceso, no valida una importación y no
+publica ni guarda precios.
+
+Con Node 20: `./init.sh` (sin `--dev`) y
+`npm test -- src/app/api/teach-me src/components/teach-me-access.test.tsx src/components/teach-draft-preview.test.tsx src/components/teach-skill-activation.test.tsx`.
+El README de BmBackend documenta el joint obligatorio con Netty y PostgreSQL 16
+desechable. No se usa un stack QA ni acceso real; QA alojado queda fuera del piloto.

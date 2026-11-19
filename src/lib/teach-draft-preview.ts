@@ -38,8 +38,8 @@ const encoder = new TextEncoder();
 const decimal = /^(?:0|[1-9][0-9]{0,5})(?:\.[0-9]{1,12})?$/;
 const at = (a1: string, row: number) => a1.replace(/[0-9]+$/, String(row));
 
-function identity(value: Record<string, unknown>): value is Identity & Record<string, unknown> {
-  return value.profileKey === previewProfile && value.supplierKey === supplier && value.workbookSha256 === profileWorkbookDigest &&
+function identity(value: Record<string, unknown>, pins: ReadonlySet<string>): value is Identity & Record<string, unknown> {
+  return value.profileKey === previewProfile && value.supplierKey === supplier && typeof value.workbookSha256 === 'string' && pins.has(value.workbookSha256) &&
     typeof value.revisionId === 'string' && value.revisionId.length === 64 && /^[a-f0-9]{64}$/.test(value.revisionId);
 }
 
@@ -73,14 +73,16 @@ function row(value: unknown, number: number): value is Row {
     value.prices.every((entry, i) => price(entry, number, previewRule.bindings[i]));
 }
 
-export function readTeachDraftPreviewResult(value: unknown): Result | null {
+const canonicalPins: ReadonlySet<string> = new Set([profileWorkbookDigest]);
+
+export function readTeachDraftPreviewResult(value: unknown, pins = canonicalPins): Result | null {
   if (exactTeachObject(value, 'kind', 'draft') && value.kind === 'draft') {
     const { draft } = value;
-    if (!exactTeachObject(draft, ...identityKeys, 'schemaVersion', 'rule') || !identity(draft) || draft.schemaVersion !== 2 ||
+    if (!exactTeachObject(draft, ...identityKeys, 'schemaVersion', 'rule') || !identity(draft, canonicalPins) || draft.schemaVersion !== 2 ||
         !matchesSchema(draft.rule, previewRule)) return null;
     return { kind: 'draft', draft: { ...draft, schemaVersion: 2, rule: previewRule } };
   }
-  if (!exactTeachObject(value, 'kind', ...identityKeys, 'rows') || value.kind !== 'preview' || !identity(value) || !Array.isArray(value.rows)) return null;
+  if (!exactTeachObject(value, 'kind', ...identityKeys, 'rows') || value.kind !== 'preview' || !identity(value, pins) || !Array.isArray(value.rows)) return null;
   const rows = value.rows;
   if (rows.length !== previewRule.fixedRows.length || !rows.every((entry, i): entry is Row => row(entry, previewRule.fixedRows[i])) ||
       new Set(rows.map((entry) => entry.proposal)).size !== rows.length) return null;

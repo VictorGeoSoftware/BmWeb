@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { TeachWorkbookComposer } from '@/components/teach-workbook-composer';
 import { TeachClarificationComposer } from '@/components/teach-clarification-composer';
@@ -23,6 +23,12 @@ function TeachMeSession({ isCurrent }: { isCurrent: () => boolean }) {
   const [draftUnavailable, setDraftUnavailable] = useState(false);
   const [previewUnavailable, setPreviewUnavailable] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [activating, setActivating] = useState(false);
+  const activationPending = useRef(false);
+  const updateActivationPending = useCallback((pending: boolean) => {
+    activationPending.current = pending;
+    setActivating(pending);
+  }, []);
   const [mode, setMode] = useState<'clarification' | 'draft' | null>(null);
 
   if (denied || access === 'denied' || !isCurrent()) return unavailable;
@@ -37,7 +43,9 @@ function TeachMeSession({ isCurrent }: { isCurrent: () => boolean }) {
       </div>
       <p className="mt-2 text-muted-foreground">Espacio para enseñar a BmWeb a leer propuestas de precios eléctricos en Excel.</p>
       {isTeachDraftPreviewEnabled() && !previewUnavailable && <Button type="button" variant="outline" className="mt-3 h-auto max-w-full whitespace-normal text-left"
-        aria-expanded={previewOpen} onClick={() => setPreviewOpen(!previewOpen)}>Probar previsualización (solo muestra Gesternova sintética)</Button>}
+        aria-expanded={previewOpen} disabled={activating} onClick={() => {
+          if (!activationPending.current) setPreviewOpen(!previewOpen);
+        }}>Probar previsualización (solo muestra Gesternova sintética)</Button>}
       <div className={previewOpen ? 'mt-4 grid min-w-0 items-start gap-4 lg:grid-cols-2' : undefined}>
         <div className="min-w-0">
           <TeachWorkbookComposer isCurrent={isCurrent} onDenied={() => setDenied(true)} />
@@ -60,11 +68,13 @@ function TeachMeSession({ isCurrent }: { isCurrent: () => boolean }) {
             }} />}
           </div>}
         </div>
-        {isTeachDraftPreviewEnabled() && previewOpen && !previewUnavailable && <TeachDraftPreview isCurrent={isCurrent} onUnavailable={(status) => {
-          setPreviewOpen(false);
-          setPreviewUnavailable(true);
-          if (status !== 404) setDenied(true);
-        }} />}
+        {isTeachDraftPreviewEnabled() && previewOpen && !previewUnavailable && <TeachDraftPreview isCurrent={isCurrent}
+          activating={activating} activationPending={activationPending} setActivationPending={updateActivationPending}
+          onUnavailable={(status) => {
+            setPreviewOpen(false);
+            setPreviewUnavailable(true);
+            if (status !== 404) setDenied(true);
+          }} />}
       </div>
     </section>
   );
