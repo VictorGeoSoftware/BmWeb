@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto';
 import { isQA } from '@/lib/env';
 import { clarificationBodyLimit, clarificationMediaType, clarificationResponseLimit, isTeachClarificationEnabled, readClarificationResult } from '@/lib/teach-clarification';
 import { referenceBodyLimit, referenceFilenameHeader, referenceFormats, referenceKindForMediaType, validReferenceFilename } from '@/lib/teach-reference';
-import { readTeachReceipt, validTeachFilename, validWorkbookFilename, workbookBodyLimit, workbookFilenameHeader, workbookMediaType } from '@/lib/teach-workbook';
+import { readTeachReceipt, validWorkbookFilename, workbookBodyLimit, workbookFilenameHeader, workbookMediaType } from '@/lib/teach-workbook';
+import { filenameFromHeader } from '@/lib/teach-raw-request';
 import { isTeachSupplierDraftEnabled, readSupplierDraftResult, supplierDraftBodyLimit, supplierDraftMediaType, supplierDraftRevisionFields } from '@/lib/teach-supplier-draft';
 import { draftPreviewBodyLimit, draftPreviewMediaType, draftPreviewRevisionFields, isTeachDraftPreviewEnabled, previewProfile, profileWorkbookDigest, readTeachDraftPreviewResult } from '@/lib/teach-draft-preview';
 import { activationBodyLimit, qaPilotPreviewMediaType, parseActivationRequest, readActivationResult, readPilotPreview } from '@/lib/teach-skill-activation';
@@ -16,16 +17,6 @@ const headers = { 'Cache-Control': 'no-store' };
 type UploadPath = 'messages' | 'references' | 'clarifications' | 'activation';
 const errors: Record<number, string> = { 400: 'invalid_message', 413: 'upload_too_large' };
 let active = 0;
-
-function filenameFromHeader(wire: string | null) {
-  if (!wire || !/^[A-Za-z0-9_-]{1,340}$/.test(wire)) return null;
-  try {
-    const bytes = Buffer.from(wire, 'base64url');
-    if (bytes.length > 255 || bytes.toString('base64url') !== wire) return null;
-    const name = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
-    return validTeachFilename(name) ? name : null;
-  } catch { return null; }
-}
 
 async function boundedJson(response: Response, strictBOM: boolean, limit = clarificationResponseLimit) {
   const reader = response.body?.getReader();

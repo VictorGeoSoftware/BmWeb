@@ -222,3 +222,25 @@ Node 20: `./init.sh` (sin `--dev`) y el foco de validación anterior, añadiendo
 `src/components/teach-production-promotion.test.tsx`. El README de BmBackend
 documenta el joint Pages → Netty → PG16 desechable → fake en memoria. No es
 browser E2E ni prueba de un PR real, hosting, merge o despliegue.
+
+## Enséñame: consumo Excel en el análogo de producción
+
+Solo el runner sintético monta el handler Pages de `src/testing/` (sin archivo
+de ruta registrado en Next.js). Recibe una capacidad explícita para un Netty
+análogo en `127.0.0.1`, no parámetros de QA ni configuración de `.env`. Valida
+framing y autorización en bruto. El runner inyecta el certificado efímero de
+Netty como único pin. El preflight HTTPS no lleva bearer ni cuerpo; cada socket
+real de reenvío también se verifica contra ese pin antes de emitir HTTP. Solo
+abre el stream tras la admisión autenticada con el nonce de ese POST, no con el
+del preflight ni con un `100 Continue` ordinario. No hay prueba reutilizable,
+redirect, reconexión automática, cookies ni reenvío de headers arbitrarios.
+
+`POST /api/prod-analog/proposal-import` transporta XLSX; `GET
+/api/prod-analog/proposal-imports` lista por actor. El backend resuelve y ejecuta
+la revisión liberada; Pages no selecciona, despliega ni persiste. El recibo/las
+filas identifican revisión, digest y ordinal. El flujo PDF y el piloto QA no
+cambian. No hay interfaz operativa ni demo de hosting.
+
+Node 20: `./init.sh` (sin `--dev`) y `npm test --
+src/app/api/prod-analog/proposal-import/route.test.ts` junto al foco previo.
+El README de BmBackend documenta el joint obligatorio con PG16 desechable.
