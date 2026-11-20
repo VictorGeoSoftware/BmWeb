@@ -15,14 +15,11 @@ import {
 } from '@/components/ui/sidebar';
 import { Progress } from '@/components/ui/progress';
 import { useToast } from '@/hooks/use-toast';
-import { Download, FileUp, GraduationCap, LayoutList, LogOut, Receipt, Trash2, Users } from 'lucide-react';
+import { Download, FileUp, LayoutList, LogOut, Receipt, Trash2, Users } from 'lucide-react';
 import { authFetch } from '@/lib/api-client';
-import { useTeachMeAccess } from '@/hooks/use-teach-me-access';
 
 export function AppSidebar() {
-  // The mixed App/Pages router can report no pathname before the router is ready.
-  const pathname = usePathname() ?? '';
-  const teachMeAccess = useTeachMeAccess(pathname);
+  const pathname = usePathname();
   const { toast } = useToast();
   const [isFetchingTotalPrices, setIsFetchingTotalPrices] = useState(false);
   const [fetchTotalPricesProgress, setFetchTotalPricesProgress] = useState(0);
@@ -170,20 +167,6 @@ export function AppSidebar() {
               </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>
-          {teachMeAccess === 'granted' && (
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                asChild
-                isActive={pathname === '/dashboard/teach-me'}
-                tooltip={{ children: 'Enséñame', side: 'right' }}
-              >
-                <Link href="/dashboard/teach-me">
-                  <GraduationCap />
-                  <span>Enséñame</span>
-                </Link>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          )}
           <SidebarMenuItem>
             <SidebarMenuButton
               asChild

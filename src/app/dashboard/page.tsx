@@ -1,5 +1,4 @@
 import PdfUpload from '@/components/pdf-upload';
-import { TeachProposalImport } from '@/components/teach-proposal-import';
 
 export default function DashboardPage() {
   return (
@@ -11,7 +10,6 @@ export default function DashboardPage() {
         </p>
       </header>
       <PdfUpload />
-      <TeachProposalImport />
     </>
   );
 }

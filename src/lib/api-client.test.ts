@@ -104,42 +104,4 @@ describe('authFetch', () => {
 
     await expect(authFetch('/api/price-proposals')).resolves.toBe(backendResponse);
   });
-
-  it.each(['abort', 'view', 'identity', 'none'] as const)('checks opt-in dispatch after deferred token lookup: %s', async (change) => {
-    let finish!: (token: string) => void;
-    const token = new Promise<string>((resolve) => { finish = resolve; });
-    const user = { getIdToken: vi.fn(() => token) };
-    authMock.currentUser = user;
-    const controller = new AbortController();
-    let current = true;
-    const canDispatch = () => current;
-    const init = { method: 'POST', signal: controller.signal };
-    const request = authFetch('/api/teach-me/references', init, canDispatch);
-    expect(user.getIdToken).toHaveBeenCalledOnce();
-    expect(fetchMock).not.toHaveBeenCalled();
-    if (change === 'abort') controller.abort();
-    if (change === 'view') current = false;
-    if (change === 'identity') authMock.currentUser = { ...user };
-    finish('synthetic-token');
-
-    if (change === 'none') {
-      await request;
-      expect(fetchMock).toHaveBeenCalledOnce();
-      const [, forwarded] = fetchMock.mock.calls[0];
-      expect(forwarded.signal).toBe(controller.signal);
-      expect(forwarded.headers.get('Authorization')).toBe('Bearer synthetic-token');
-    } else {
-      await expect(request).rejects.toMatchObject({ name: 'AbortError' });
-      expect(fetchMock).not.toHaveBeenCalled();
-    }
-  });
-
-  it('does not impose the opt-in check on existing callers', async () => {
-    signedIn('captured-token');
-    const request = authFetch('/api/price-proposals');
-    signedIn('other-token');
-    await request;
-    expect(fetchMock).toHaveBeenCalledOnce();
-    expect(fetchMock.mock.calls[0][1].headers.get('Authorization')).toBe('Bearer captured-token');
-  });
 });

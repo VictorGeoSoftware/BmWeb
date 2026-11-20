@@ -10,10 +10,8 @@ import { auth } from '@/lib/firebase/client';
  *
  * Throws when nobody is signed in, rather than sending an anonymous request
  * that would fail server-side with a less obvious error.
- * Pass `canDispatch` to opt in to a check of the caller's lifetime, abort
- * signal and captured Firebase user after the asynchronous token lookup.
  */
-export async function authFetch(input: string, init: RequestInit = {}, canDispatch?: () => boolean): Promise<Response> {
+export async function authFetch(input: string, init: RequestInit = {}): Promise<Response> {
   const user = auth.currentUser;
   if (!user) {
     throw new Error('You must be signed in to perform this action.');
@@ -23,8 +21,5 @@ export async function authFetch(input: string, init: RequestInit = {}, canDispat
   const headers = new Headers(init.headers);
   headers.set('Authorization', `Bearer ${idToken}`);
 
-  if (canDispatch && (init.signal?.aborted || auth.currentUser !== user || !canDispatch())) {
-    throw new DOMException('Request is no longer current.', 'AbortError');
-  }
   return fetch(input, { ...init, headers });
 }
