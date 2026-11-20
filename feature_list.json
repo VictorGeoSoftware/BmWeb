@@ -1,0 +1,145 @@
+[
+  {
+    "id": "teach-access-qa",
+    "area": "acceso",
+    "title": "Abrir Enséñame en QA como administrador autorizado",
+    "user_visible_behavior": "Un administrador con autorización específica puede abrir Enséñame desde el menú de QA. Un administrador sin ese permiso no tiene acceso, ni por URL directa.",
+    "depends_on": [],
+    "status": "passing",
+    "verification": ["Probar menú y acceso directo con un administrador autorizado, otro no autorizado y un permiso revocado. Comprobar que producción no habilita la sección."],
+    "evidence": ["2026-11-19: ./init.sh pasó TypeScript y 100 pruebas de BmWeb; Gradle pasó 10 pruebas enfocadas de autorización en BmBackEnd-teach-me. Sin Docker ni servicios reales."],
+    "notes": "La decisión de acceso se toma en servidor sin cambiar el permiso general. Validación independiente y smoke de Firebase en QA pendientes."
+  },
+  {
+    "id": "teach-workbook-attachment",
+    "area": "enseñanza",
+    "title": "Adjuntar un Excel a un mensaje de enseñanza",
+    "user_visible_behavior": "El autor puede enviar un mensaje con un .xlsx y distinguir el archivo enviado del texto en la conversación.",
+    "depends_on": ["teach-access-qa"],
+    "status": "not_started",
+    "verification": ["Enviar un .xlsx sintético desde el compositor y comprobar que el servidor rechaza un archivo inválido aunque tenga esa extensión."],
+    "evidence": [],
+    "notes": "Aplicar autorización y límites en servidor. No aceptar .xlsm ni otros formatos de Excel."
+  },
+  {
+    "id": "teach-reference-attachments",
+    "area": "enseñanza",
+    "title": "Adjuntar referencias a la conversación",
+    "user_visible_behavior": "El autor puede añadir un PDF o PNG al mensaje como referencia, sin sustituir el Excel que contiene los precios.",
+    "depends_on": ["teach-workbook-attachment"],
+    "status": "not_started",
+    "verification": ["Adjuntar una referencia de cada tipo y verificar que ambas quedan marcadas como apoyo; rechazar un tipo no permitido sin quitar el Excel válido."],
+    "evidence": [],
+    "notes": "No cambia la ruta de importación de PDF. Resolver retención y uso de datos antes de habilitar archivos reales."
+  },
+  {
+    "id": "inspect-workbook",
+    "area": "extracción",
+    "title": "Inspeccionar la estructura de un Excel",
+    "user_visible_behavior": "El asistente puede consultar hojas, encabezados, valores y referencias a celdas del Excel adjunto para preguntar sobre el contenido real.",
+    "depends_on": ["teach-workbook-attachment"],
+    "status": "not_started",
+    "verification": ["Inspeccionar un .xlsx sintético con más de una hoja, celdas vacías y fórmulas; verificar las referencias de origen y que no se ejecuta código ni se siguen enlaces externos."],
+    "evidence": [],
+    "notes": "Especificar el tratamiento de fórmulas y límites de lectura antes de implementar."
+  },
+  {
+    "id": "clarify-workbook-rules",
+    "area": "enseñanza",
+    "title": "Aclarar las reglas de extracción por chat",
+    "user_visible_behavior": "El asistente plantea una pregunta concreta cuando el libro no basta para decidir qué importar. El autor puede responder y aportar referencias para resolverla.",
+    "depends_on": ["inspect-workbook", "teach-reference-attachments"],
+    "status": "not_started",
+    "verification": ["Con una respuesta del modelo controlada y un libro con selección ambigua, comprobar que el autor recibe una pregunta sobre la ambigüedad y que su respuesta y adjuntos de apoyo llegan como contexto en el turno siguiente."],
+    "evidence": [],
+    "notes": "No enviar archivos reales al proveedor del modelo hasta acordar qué contenido se autoriza. Los adjuntos no son instrucciones operativas."
+  },
+  {
+    "id": "draft-supplier-skill",
+    "area": "enseñanza",
+    "title": "Generar un borrador de Skill por comercializadora",
+    "user_visible_behavior": "El autor obtiene una Skill independiente a partir del Excel y las reglas aclaradas. Puede corregirla por chat y obtener una revisión identificable sin activarla.",
+    "depends_on": ["clarify-workbook-rules"],
+    "status": "not_started",
+    "verification": ["Generar un borrador con un modelo controlado, corregir la selección de una columna y comprobar que se muestra una revisión distinta sin alterar la Skill de PDF ni el catálogo activo."],
+    "evidence": [],
+    "notes": "El borrador contiene reglas de extracción, no código ni permisos de publicación."
+  },
+  {
+    "id": "preview-draft-extraction",
+    "area": "extracción",
+    "title": "Previsualizar los precios de un borrador",
+    "user_visible_behavior": "El autor puede ejecutar una revisión sobre el Excel de enseñanza y contrastar la propuesta, tarifa, períodos, unidades y valores con el origen sin guardar propuestas.",
+    "depends_on": ["draft-supplier-skill"],
+    "status": "not_started",
+    "verification": ["Comparar la extracción del piloto Gesternova 2.0TD con las filas y celdas aprobadas; comprobar que no aparecen filas indexadas o híbridas y que no hay escrituras en propuestas."],
+    "evidence": [],
+    "notes": "Acordar primero con el autor el resultado esperado del libro piloto."
+  },
+  {
+    "id": "activate-skill-qa",
+    "area": "QA",
+    "title": "Activar una Skill de Excel solo en QA",
+    "user_visible_behavior": "El autor puede activar en QA una revisión probada. Si había otra revisión activa de la comercializadora, solo la nueva queda activa en QA y producción conserva su estado.",
+    "depends_on": ["preview-draft-extraction"],
+    "status": "not_started",
+    "verification": ["Activar una revisión distinta para una comercializadora con catálogos de QA y producción. Comprobar que solo cambia QA, que un borrador sin prueba no se activa y que el evento registra actor, revisión y entorno."],
+    "evidence": [],
+    "notes": "Verificar aislamiento aunque BmPriceAgent se comparta entre entornos."
+  },
+  {
+    "id": "select-supplier-skill",
+    "area": "extracción",
+    "title": "Seleccionar la Skill activa para un Excel",
+    "user_visible_behavior": "Se resuelve la comercializadora por el nombre del archivo o, si no se reconoce, por el contenido. Una identidad ambigua, contradictoria o sin Skill activa genera un error explícito.",
+    "depends_on": ["activate-skill-qa"],
+    "status": "not_started",
+    "verification": ["Probar nombre conocido, nombre genérico con identidad en el contenido, conflicto entre señales y comercializadora sin Skill. Confirmar que solo se resuelven coincidencias únicas en el entorno solicitado."],
+    "evidence": [],
+    "notes": "Confirmar denominaciones y alias del piloto. No resolver conflictos silenciosamente."
+  },
+  {
+    "id": "import-excel-proposals-qa",
+    "area": "importación",
+    "title": "Importar propuestas de Excel con la Skill activa en QA",
+    "user_visible_behavior": "Al subir un Excel desde la carga habitual de QA, BmWeb muestra las propuestas extraídas y guardadas con la Skill seleccionada. Un formato incompatible no guarda filas parciales.",
+    "depends_on": ["select-supplier-skill"],
+    "status": "not_started",
+    "verification": ["Subir el segundo libro del piloto con precios distintos y comprobar el listado de propuestas en QA; repetir con un formato incompatible y verificar que no hay escrituras. Confirmar que el flujo normal de PDF sigue funcionando."],
+    "evidence": [],
+    "notes": "El resultado verificable debe identificar la revisión usada para validar la prueba."
+  },
+  {
+    "id": "validate-skill-qa",
+    "area": "QA",
+    "title": "Validar una ejecución de la Skill en QA",
+    "user_visible_behavior": "El autor puede dejar constancia de que la carga de QA produjo los precios esperados con una revisión concreta. Una revisión nueva no hereda esa aprobación.",
+    "depends_on": ["import-excel-proposals-qa"],
+    "status": "not_started",
+    "verification": ["Validar una carga exitosa, comprobar la revisión y el resultado registrados en auditoría, y activar una revisión posterior para confirmar que no figura como validada."],
+    "evidence": [],
+    "notes": "Una previsualización no equivale a validar la carga normal de QA."
+  },
+  {
+    "id": "request-production-promotion",
+    "area": "promoción",
+    "title": "Abrir un PR para la revisión validada",
+    "user_visible_behavior": "El autor solicita la promoción desde Enséñame y recibe el enlace de un PR con la revisión exacta validada en QA. El estado no indica que ya se ha publicado.",
+    "depends_on": ["validate-skill-qa"],
+    "status": "not_started",
+    "verification": ["Con una integración de prueba, solicitar la promoción y comprobar el contenido del PR, su vínculo de auditoría y que no cambia producción. Rechazar una revisión no validada y verificar que no se envían chats, adjuntos ni credenciales."],
+    "evidence": [],
+    "notes": "Confirmar repositorio y rama de destino. Solo Victor realiza el merge; la integración no puede fusionar ni escribir directamente en la rama protegida."
+  },
+  {
+    "id": "use-released-skill-production",
+    "area": "publicación",
+    "title": "Usar en producción la Skill desplegada",
+    "user_visible_behavior": "La carga normal de Excel en producción solo usa la revisión publicada mediante el despliegue. Una activación de QA, un PR abierto o un despliegue fallido no cambian la Skill disponible en producción.",
+    "depends_on": ["request-production-promotion"],
+    "status": "not_started",
+    "verification": ["En un entorno de prueba con configuración equivalente, comprobar que una revisión en PR no es seleccionable; simular un despliegue fallido y luego desplegar la revisión aceptada. Verificar que la carga selecciona la revisión publicada y conserva el flujo PDF."],
+    "evidence": [],
+    "notes": "Verificar la separación de catálogos y el mecanismo de reversión antes de habilitar la publicación real. No requiere desplegar a producción para verificar la funcionalidad."
+  }
+]
